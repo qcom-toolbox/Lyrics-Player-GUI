@@ -12,21 +12,29 @@ permissions:
 jobs:
   build:
     name: Package (${{ matrix.name }})
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
+          # Cross-packaging a win32 target from Linux/macOS needs Wine to
+          # inject the exe's version/icon resources, so build it natively
+          # on Windows instead. Same idea for macOS: build x64 and arm64
+          # each on their own native architecture runner.
           - name: windows-x64
+            os: windows-latest
             platform: win32
             arch: x64
           - name: linux-x64
+            os: ubuntu-latest
             platform: linux
             arch: x64
           - name: macos-x64
+            os: macos-13
             platform: darwin
             arch: x64
           - name: macos-arm64
+            os: macos-14
             platform: darwin
             arch: arm64
 
@@ -47,7 +55,14 @@ jobs:
         working-directory: src
         run: npx electron-packager . PearLyrics --platform=${{ matrix.platform }} --arch=${{ matrix.arch }} --out=dist --overwrite
 
-      - name: Zip artifact
+      - name: Zip artifact (Windows)
+        if: runner.os == 'Windows'
+        working-directory: src/dist
+        shell: pwsh
+        run: Compress-Archive -Path "PearLyrics-${{ matrix.platform }}-${{ matrix.arch }}" -DestinationPath "../../PearLyrics-${{ matrix.name }}.zip"
+
+      - name: Zip artifact (macOS/Linux)
+        if: runner.os != 'Windows'
         working-directory: src/dist
         run: zip -r "../../PearLyrics-${{ matrix.name }}.zip" "PearLyrics-${{ matrix.platform }}-${{ matrix.arch }}"
 
