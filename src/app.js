@@ -247,6 +247,126 @@ function extractCoverUrl(state) {
 function applyBackgroundImage(url) {
     if (!url) return;
     bgImage.style.backgroundImage = `url(${JSON.stringify(url)})`;
+    extractAndApplyAlbumColor(url);
+}
+
+// --- Lyric text color driven by the album art -------------------------
+// Sample the cover's dominant hue/saturation, then rebuild the lyric text
+// gradients from it. Lightness is always clamped into a range that stays
+// legible against the dark, blurred background, regardless of how dark or
+// saturated the source artwork is.
+function hslToRgb(h, s, l) {
+    h = ((h % 360) + 360) % 360;
+    s = Math.max(0, Math.min(1, s));
+    l = Math.max(0, Math.min(1, l));
+    const c = (1 - Math.abs(2 * l - 1)) * s;
+    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
+    const m = l - c / 2;
+    let r = 0, g = 0, b = 0;
+    if (h < 60) [r, g, b] = [c, x, 0];
+    else if (h < 120) [r, g, b] = [x, c, 0];
+    else if (h < 180) [r, g, b] = [0, c, x];
+    else if (h < 240) [r, g, b] = [0, x, c];
+    else if (h < 300) [r, g, b] = [x, 0, c];
+    else [r, g, b] = [c, 0, x];
+    return [
+        Math.round((r + m) * 255),
+        Math.round((g + m) * 255),
+        Math.round((b + m) * 255),
+    ];
+}
+
+function rgbToHex([r, g, b]) {
+    return '#' + [r, g, b].map((v) => Math.max(0, Math.min(255, v)).toString(16).padStart(2, '0')).join('');
+}
+
+function rgbToHsl(r, g, b) {
+    r /= 255; g /= 255; b /= 255;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    const l = (max + min) / 2;
+    const d = max - min;
+    let h = 0;
+    let s = 0;
+    if (d !== 0) {
+        s = d / (1 - Math.abs(2 * l - 1));
+        switch (max) {
+            case r: h = 60 * (((g - b) / d) % 6); break;
+            case g: h = 60 * ((b - r) / d + 2); break;
+            case b: h = 60 * ((r - g) / d + 4); break;
+        }
+    }
+    if (h < 0) h += 360;
+    return [h, s, l];
+}
+
+function sampleDominantHueSat(imgEl) {
+    try {
+        const size = 24;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(imgEl, 0, 0, size, size);
+        const { data } = ctx.getImageData(0, 0, size, size);
+        let r = 0, g = 0, b = 0, n = 0;
+        for (let i = 0; i < data.length; i += 4) {
+            if (data[i + 3] < 200) continue; // skip transparent pixels
+            r += data[i]; g += data[i + 1]; b += data[i + 2]; n++;
+        }
+        if (!n) return null;
+        const [h, s] = rgbToHsl(r / n, g / n, b / n);
+        return { h, s };
+    } catch {
+        // Canvas is tainted (cross-origin image without CORS headers) —
+        // silently fall back to the default palette already in the CSS.
+        return null;
+    }
+}
+
+function clampSat(s, min, max) {
+    return Math.min(max, Math.max(min, s));
+}
+
+function setAlbumPalette(h, s) {
+    const root = document.documentElement.style;
+
+    // Melancholic theme: mostly light/near-white stops so the gradient stays
+    // readable, with a deeper accent stop floored at 32% lightness so it
+    // never gets close to the background's own darkness.
+    const m1 = hslToRgb(h, clampSat(s, 0, 0.35) * 0.15, 0.95);
+    const m2 = hslToRgb(h, clampSat(s, 0.3, 0.8), 0.64);
+    const m3 = hslToRgb(h, clampSat(s, 0.3, 0.65), 0.32);
+    const m4 = hslToRgb(h, clampSat(s, 0.25, 0.6), 0.8);
+    root.setProperty('--alb-m-1', rgbToHex(m1));
+    root.setProperty('--alb-m-2', rgbToHex(m2));
+    root.setProperty('--alb-m-3', rgbToHex(m3));
+    root.setProperty('--alb-m-4', rgbToHex(m4));
+    root.setProperty('--alb-m-glow', m2.join(', '));
+    root.setProperty('--alb-m-glow-deep', m3.join(', '));
+
+    // Vivid theme: kept bright/pastel throughout (lightness never drops
+    // below ~76%) to match its punchier, high-contrast look.
+    const v1 = hslToRgb(h, clampSat(s, 0, 0.3) * 0.3, 0.97);
+    const v2 = hslToRgb(h, clampSat(s, 0.35, 0.85), 0.76);
+    const v3 = hslToRgb(h + 35, clampSat(s, 0.3, 0.7), 0.85);
+    const v4 = hslToRgb(h, clampSat(s, 0.3, 0.7), 0.82);
+    root.setProperty('--alb-v-1', rgbToHex(v1));
+    root.setProperty('--alb-v-2', rgbToHex(v2));
+    root.setProperty('--alb-v-3', rgbToHex(v3));
+    root.setProperty('--alb-v-4', rgbToHex(v4));
+    root.setProperty('--alb-v-glow', v2.join(', '));
+}
+
+function extractAndApplyAlbumColor(url) {
+    if (!url) return;
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+    img.onload = () => {
+        const result = sampleDominantHueSat(img);
+        if (result) setAlbumPalette(result.h, result.s);
+    };
+    img.src = url;
 }
 
 // Toggling this class only visibly pulses the background under the "vivid"
@@ -688,9 +808,14 @@ function renderTimestamps(progressMs) {
     }
 
     if (activeIndex === -1) {
-        if (currentLineIndex !== -1) {
-            currentLineIndex = -1;
-            lyricsTarget.innerHTML = '';
+        // Before the first timestamped line — an instrumental intro.
+        // currentLineIndex uses -2 as "icon already shown" so this only
+        // fires once, not every animation frame.
+        if (currentLineIndex !== -2) {
+            currentLineIndex = -2;
+            clearWbwTimers();
+            wbwLineIndex = -2;
+            showInstrumentalIcon(-2);
         }
         return;
     }
@@ -736,6 +861,11 @@ function applyWordChaos(span, lineIndex, wordIndex) {
     span.style.setProperty('--word-rest-tilt', `${restTilt.toFixed(2)}deg`);
 }
 
+// A gap between lines longer than this is treated as an instrumental break —
+// the music-note icon replaces the lingering last word for the remainder.
+const INSTRUMENTAL_GAP_MS = 6000;
+const INSTRUMENTAL_ICON_DELAY_MS = 1500;
+
 function startWordByWord(textString, availableMs, lineIndex) {
     clearWbwTimers();
     wbwLineIndex = lineIndex;
@@ -780,6 +910,38 @@ function startWordByWord(textString, availableMs, lineIndex) {
             wbwTimers.push(t);
         });
     }
+
+    // If this line's words finish well before the next line actually starts
+    // (a long instrumental break mid-song), swap to the music-note icon for
+    // the remaining gap instead of leaving the last word frozen on screen.
+    const wordsEndMs = wordCount * slotMs;
+    const leftoverMs = availableMs - wordsEndMs;
+    if (leftoverMs > INSTRUMENTAL_GAP_MS) {
+        const iconDelay = wordsEndMs + INSTRUMENTAL_ICON_DELAY_MS;
+        const t = setTimeout(() => {
+            if (wbwLineIndex !== lineIndex) return;
+            showInstrumentalIcon(lineIndex);
+        }, iconDelay);
+        wbwTimers.push(t);
+    }
+}
+
+function showInstrumentalIcon(lineIndex) {
+    lyricsTarget.innerHTML = '';
+
+    const lineWrapper = document.createElement('div');
+    lineWrapper.className = 'lyric-line lyric-line--live instrumental-icon';
+    lineWrapper.style.animationDuration = '900ms';
+
+    const span = document.createElement('span');
+    span.className = 'lyric-word';
+    span.textContent = '♪';
+    span.style.animationDuration = '500ms, 1800ms';
+    span.style.animationDelay = '0s, 0s';
+    applyWordChaos(span, lineIndex, 0);
+
+    lineWrapper.appendChild(span);
+    lyricsTarget.appendChild(lineWrapper);
 }
 
 function showSingleWord(word, burstMs, lineMs, lineIndex, wordIndex) {
