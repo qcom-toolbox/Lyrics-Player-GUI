@@ -1,5 +1,6 @@
 const lyricsTarget = document.getElementById('lyrics-target');
 const bgImage = document.getElementById('bg-image');
+const bgOverlay = document.getElementById('bg-overlay');
 const bgInput = document.getElementById('bg-input');
 const hostInput = document.getElementById('host-input');
 const portInput = document.getElementById('port-input');
@@ -34,6 +35,23 @@ lyricModeSelect.value = lyricMode;
 lyricModeSelect.addEventListener('change', () => {
     lyricMode = lyricModeSelect.value;
     localStorage.setItem(LYRIC_MODE_STORAGE_KEY, lyricMode);
+    currentLineIndex = -1; // force re-render on next tick
+});
+
+const lyricThemeSelect = document.getElementById('lyric-theme-select');
+const LYRIC_THEME_STORAGE_KEY = 'pear-lyrics-theme';
+
+function loadLyricTheme() {
+    return localStorage.getItem(LYRIC_THEME_STORAGE_KEY) || 'melancholic';
+}
+
+let lyricTheme = loadLyricTheme();
+lyricThemeSelect.value = lyricTheme;
+document.body.dataset.lyricTheme = lyricTheme;
+lyricThemeSelect.addEventListener('change', () => {
+    lyricTheme = lyricThemeSelect.value;
+    localStorage.setItem(LYRIC_THEME_STORAGE_KEY, lyricTheme);
+    document.body.dataset.lyricTheme = lyricTheme;
     currentLineIndex = -1; // force re-render on next tick
 });
 
@@ -231,6 +249,18 @@ function applyBackgroundImage(url) {
     bgImage.style.backgroundImage = `url(${JSON.stringify(url)})`;
 }
 
+// Toggling this class only visibly pulses the background under the "vivid"
+// theme (see body[data-lyric-theme="vivid"] rules in style.css) — melancholic
+// keeps just the slow continuous drift, so this is safe to always call.
+function pulseBackground() {
+    [bgImage, bgOverlay].forEach((el) => {
+        el.classList.remove('bg-pulse');
+        // Force reflow so the animation restarts even if it's still mid-pulse
+        void el.offsetWidth;
+        el.classList.add('bg-pulse');
+    });
+}
+
 function blobToDataUrl(blob) {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -375,7 +405,10 @@ function normalizeTrackTitle(title) {
 
 function normalizeArtistName(artist) {
     if (!artist) return '';
-    return artist.replace(/\s*-\s*topic\s*$/i, '').trim();
+    return artist
+        .replace(/\s*-\s*topic\s*$/i, '')
+        .replace(/\s*(,|&|\band\b|\bet\b)\s*/gi, ', ')
+        .trim();
 }
 
 function getTrackDurationSec(state) {
@@ -676,6 +709,7 @@ function renderTimestamps(progressMs) {
     }
 
     currentLineIndex = activeIndex;
+    pulseBackground();
     startWordByWord(text, availableMs, activeIndex);
 }
 
@@ -684,6 +718,22 @@ function renderTimestamps(progressMs) {
 function clearWbwTimers() {
     wbwTimers.forEach(clearTimeout);
     wbwTimers = [];
+}
+
+// Deterministic pseudo-random in [0, 1) so a given word/line keeps the same
+// "chaotic" tilt/drift across re-renders instead of jittering every frame.
+function seededRand(seed) {
+    const x = Math.sin(seed * 12.9898) * 43758.5453;
+    return x - Math.floor(x);
+}
+
+function applyWordChaos(span, lineIndex, wordIndex) {
+    const tilt = (seededRand(lineIndex * 97 + wordIndex * 13 + 1) * 2 - 1) * 14;
+    const drift = (seededRand(lineIndex * 131 + wordIndex * 17 + 50) * 2 - 1) * 26;
+    const restTilt = (seededRand(lineIndex * 173 + wordIndex * 19 + 90) * 2 - 1) * 3;
+    span.style.setProperty('--word-tilt', `${tilt.toFixed(2)}deg`);
+    span.style.setProperty('--word-drift', `${drift.toFixed(2)}px`);
+    span.style.setProperty('--word-rest-tilt', `${restTilt.toFixed(2)}deg`);
 }
 
 function startWordByWord(textString, availableMs, lineIndex) {
@@ -703,12 +753,20 @@ function startWordByWord(textString, availableMs, lineIndex) {
     const maxSlotMs = lyricMode === 'build-up' ? 400 : 600;
     const slotMs = Math.max(80, Math.min(maxSlotMs, rawSlotMs));
 
+    // The entrance animations are deliberately slow/heavy for a dramatic feel,
+    // but they must still fully resolve (blur -> 0) before the word is swapped
+    // out, or fast lyrics end up looking permanently blurry. Scale the actual
+    // animation duration to whatever slot this word gets, capped at the full
+    // "dramatic" length for slower lines.
+    const burstMs = Math.max(120, Math.min(500, slotMs * 0.85));
+    const lineMs = Math.max(160, Math.min(1300, slotMs * 0.95));
+
     if (lyricMode === 'build-up') {
         words.forEach((word, index) => {
             const delay = index * slotMs;
             const t = setTimeout(() => {
                 if (wbwLineIndex !== lineIndex) return;
-                showBuildUp(words, index);
+                showBuildUp(words, index, burstMs, lineMs, lineIndex);
             }, delay);
             wbwTimers.push(t);
         });
@@ -717,40 +775,44 @@ function startWordByWord(textString, availableMs, lineIndex) {
             const delay = index * slotMs;
             const t = setTimeout(() => {
                 if (wbwLineIndex !== lineIndex) return;
-                showSingleWord(word);
+                showSingleWord(word, burstMs, lineMs, lineIndex, index);
             }, delay);
             wbwTimers.push(t);
         });
     }
 }
 
-function showSingleWord(word) {
+function showSingleWord(word, burstMs, lineMs, lineIndex, wordIndex) {
     lyricsTarget.innerHTML = '';
 
     const lineWrapper = document.createElement('div');
     lineWrapper.className = 'lyric-line lyric-line--live';
+    lineWrapper.style.animationDuration = `${lineMs}ms`;
 
     const span = document.createElement('span');
     span.className = 'lyric-word';
     span.textContent = word;
+    span.style.animationDuration = `${burstMs}ms, 1800ms`;
     span.style.animationDelay = '0s, 0s';
+    applyWordChaos(span, lineIndex, wordIndex);
 
     lineWrapper.appendChild(span);
     lyricsTarget.appendChild(lineWrapper);
 }
 
-function showBuildUp(words, revealedUpTo) {
+function showBuildUp(words, revealedUpTo, burstMs, lineMs, lineIndex) {
     lyricsTarget.innerHTML = '';
 
     const lineWrapper = document.createElement('div');
     lineWrapper.className = 'lyric-line lyric-line--live';
+    lineWrapper.style.animationDuration = `${lineMs}ms`;
 
     // Only render words up to revealedUpTo — no hidden placeholders.
     // justify-content: center on .lyric-line keeps the growing text centered.
     for (let index = 0; index <= revealedUpTo; index++) {
         const span = document.createElement('span');
         span.textContent = words[index];
-        span.style.animationDelay = '0s, 0s';
+        applyWordChaos(span, lineIndex, index);
 
         if (index < revealedUpTo) {
             // Already-revealed words: visible but dimmed, no animation
@@ -758,6 +820,8 @@ function showBuildUp(words, revealedUpTo) {
         } else {
             // The newest word: full burst animation
             span.className = 'lyric-word';
+            span.style.animationDuration = `${burstMs}ms, 1800ms`;
+            span.style.animationDelay = '0s, 0s';
         }
 
         lineWrapper.appendChild(span);

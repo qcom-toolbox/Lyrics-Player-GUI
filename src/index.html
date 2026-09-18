@@ -9,7 +9,9 @@
 <body>
 
     <div id="bg-overlay"></div>
-    <div id="bg-image"></div>
+    <div id="bg-stage">
+        <div id="bg-image"></div>
+    </div>
 
     <div class="controls-panel">
         <div class="control-group">
@@ -30,6 +32,13 @@
             <select id="lyric-mode-select">
                 <option value="word-by-word">Word by Word</option>
                 <option value="build-up">Build-Up</option>
+            </select>
+        </div>
+        <div class="control-group">
+            <label for="lyric-theme-select">Animation Style:</label>
+            <select id="lyric-theme-select">
+                <option value="melancholic">Melancholic</option>
+                <option value="vivid">Vivid</option>
             </select>
         </div>
         <hr class="panel-divider">

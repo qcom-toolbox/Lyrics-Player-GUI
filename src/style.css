@@ -12,13 +12,49 @@ body {
     display: flex; justify-content: center; align-items: center;
 }
 
-#bg-image {
+#bg-stage {
     position: absolute; top: -30px; left: -30px; right: -30px; bottom: -30px;
+    z-index: -2;
+    transform-origin: center center;
+    animation: bgDrift 22s ease-in-out infinite alternate;
+}
+
+#bg-image {
+    position: absolute; inset: 0;
     background-size: cover; background-position: center;
     filter: blur(var(--blur-amount)) brightness(0.35);
-    z-index: -2; 
-    transition: background-image 1s cubic-bezier(0.25, 1, 0.5, 1);
-    will-change: background-image; /* Pre-allocates background transition space */
+    transition: background-image 1s cubic-bezier(0.25, 1, 0.5, 1), filter 0.35s ease;
+    will-change: background-image, filter, transform; /* Pre-allocates background transition space */
+    transform-origin: center center;
+}
+
+/* Beat pulse — only in the "vivid" theme. On each new lyric line, the
+   background gets a quick brightness/saturation/scale punch to match the
+   punchier, upbeat feel of that theme; melancholic keeps just the slow drift. */
+body[data-lyric-theme="vivid"] #bg-image.bg-pulse {
+    animation: bgBeatPulse 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
+    animation: overlayPulse 0.7s ease;
+}
+
+@keyframes bgBeatPulse {
+    0%   { filter: blur(var(--blur-amount)) brightness(0.35) saturate(1); transform: scale(1); }
+    22%  { filter: blur(calc(var(--blur-amount) * 0.55)) brightness(0.65) saturate(1.45); transform: scale(1.06); }
+    100% { filter: blur(var(--blur-amount)) brightness(0.35) saturate(1); transform: scale(1); }
+}
+
+@keyframes overlayPulse {
+    0% { opacity: 1; }
+    22% { opacity: 0.72; }
+    100% { opacity: 1; }
+}
+
+@keyframes bgDrift {
+    0%   { transform: scale(1.08) translate3d(0, 0, 0) rotate(0deg); }
+    50%  { transform: scale(1.18) translate3d(-2.2%, 1.6%, 0) rotate(0.7deg); }
+    100% { transform: scale(1.08) translate3d(2.2%, -1.6%, 0) rotate(-0.7deg); }
 }
 
 #bg-overlay {
@@ -122,64 +158,72 @@ body {
     gap: 0.35em 0.5em;
 }
 
+/* Only the ambient glow lives on the line wrapper — no transform/blur here,
+   so it never moves or blurs words that are already settled. All real
+   motion happens per-word below, so each word reads as its own event. */
 .lyric-line--live {
-    animation: lineSurge 0.65s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-    filter: drop-shadow(0 0 28px rgba(120, 180, 255, 0.35));
+    animation: lineGlow 1.3s ease-out forwards;
 }
 
 .lyric-word {
     display: inline-block;
     opacity: 0;
-    transform: translate3d(0, 32px, 0) scale(0.9);
-    filter: blur(10px);
-    background: linear-gradient(120deg, #ffffff 0%, #c8d9ff 45%, #ffffff 90%);
-    background-size: 200% auto;
+    transform: translate3d(var(--word-drift, 0px), 64px, 0) scale(0.85) rotateZ(var(--word-tilt, 0deg));
+    filter: blur(15px);
+    background: linear-gradient(160deg, #f7f1fb 0%, #b39cd0 32%, #4d3b6e 60%, #ceb9e3 100%);
+    background-size: 280% auto;
     -webkit-background-clip: text;
     background-clip: text;
     color: transparent;
     -webkit-text-fill-color: transparent;
-    animation: wordBurst 0.45s cubic-bezier(0.34, 1.45, 0.64, 1) forwards,
-        wordShine 2.2s ease-in-out forwards;
+    text-shadow: 0 0 44px rgba(160, 120, 210, 0.55), 0 8px 60px rgba(0, 0, 0, 0.6);
+    animation: wordBurst 0.5s cubic-bezier(0.19, 0.75, 0.22, 1) forwards,
+        wordShine 1.8s ease-in-out forwards;
 }
 
-@keyframes lineSurge {
+@keyframes lineGlow {
     0% {
-        opacity: 0;
-        transform: translate3d(0, 40px, 0) scale(0.88) rotateX(12deg);
-        filter: blur(14px) drop-shadow(0 0 0 transparent);
+        filter: drop-shadow(0 0 0 transparent) drop-shadow(0 0 0 transparent);
     }
     100% {
-        opacity: 1;
-        transform: translate3d(0, 0, 0) scale(1) rotateX(0deg);
-        filter: blur(0) drop-shadow(0 0 32px rgba(130, 190, 255, 0.4));
+        filter: drop-shadow(0 0 60px rgba(120, 85, 165, 0.6)) drop-shadow(0 0 130px rgba(55, 30, 85, 0.45));
     }
 }
 
 @keyframes wordBurst {
     0% {
         opacity: 0;
-        transform: translate3d(0, 32px, 0) scale(0.88);
-        filter: blur(12px);
+        transform: translate3d(var(--word-drift, 0px), 64px, 0) scale(0.85) rotateZ(var(--word-tilt, 0deg));
+        filter: blur(15px);
+    }
+    45% {
+        opacity: 1;
+        transform: translate3d(calc(var(--word-drift, 0px) * -0.4), -12px, 0) scale(1.1) rotateZ(calc(var(--word-tilt, 0deg) * -0.6));
+        filter: blur(1px);
+    }
+    70% {
+        transform: translate3d(calc(var(--word-drift, 0px) * 0.15), 4px, 0) scale(0.96) rotateZ(calc(var(--word-tilt, 0deg) * 0.25));
+        filter: blur(0);
     }
     100% {
         opacity: 1;
-        transform: translate3d(0, 0, 0) scale(1);
+        transform: translate3d(0, 0, 0) scale(1) rotateZ(var(--word-rest-tilt, 0deg));
         filter: blur(0);
     }
 }
 
 @keyframes wordShine {
-    0%, 100% { background-position: 0% center; }
-    50% { background-position: 100% center; }
+    0% { background-position: 0% center; }
+    100% { background-position: 280% center; }
 }
 
 /* Build-up mode: already-revealed words stay visible but slightly dimmed */
 .lyric-word--revealed {
-    opacity: 0.45;
-    transform: translate3d(0, 0, 0) scale(1);
+    opacity: 0.3;
+    transform: translate3d(0, 0, 0) scale(1) rotateZ(var(--word-rest-tilt, 0deg));
     filter: blur(0);
     animation: none !important;
-    background: linear-gradient(120deg, #ffffff 0%, #c8d9ff 45%, #ffffff 90%);
+    background: linear-gradient(160deg, #f7f1fb 0%, #a893c4 50%, #f7f1fb 100%);
     background-size: 200% auto;
     -webkit-background-clip: text;
     background-clip: text;
@@ -188,9 +232,85 @@ body {
 }
 
 .animation-pulse {
-    animation: pulseGlow 2s infinite ease-in-out;
+    animation: pulseGlow 2.6s infinite ease-in-out;
 }
 @keyframes pulseGlow {
-    0%, 100% { opacity: 0.3; }
-    50% { opacity: 0.6; }
+    0%, 100% { opacity: 0.2; transform: scale(0.98); }
+    50% { opacity: 0.5; transform: scale(1.01); }
+}
+
+/* ============================================================
+   "Vivid" theme — the original bright, bouncy dramatic look,
+   selectable as an alternative to the default melancholic one.
+   ============================================================ */
+/* Glow only here, same as the melancholic theme — no transform/blur on the
+   wrapper, or every already-settled word would re-blur each time a new word
+   is added (build-up mode recreates this wrapper per word). */
+body[data-lyric-theme="vivid"] .lyric-line--live {
+    animation: lineGlowVivid 0.9s ease-out forwards;
+}
+
+body[data-lyric-theme="vivid"] .lyric-word {
+    transform: translate3d(0, 60px, 0) scale(0.75) rotateZ(-6deg);
+    filter: blur(16px);
+    background: linear-gradient(120deg, #ffffff 0%, #9fc4ff 25%, #ffffff 50%, #ffd9f4 75%, #ffffff 100%);
+    background-size: 300% auto;
+    /* The `background` shorthand above resets background-clip to its
+       initial value (border-box), which would paint an opaque box behind
+       the (fill:transparent) text instead of clipping the gradient to the
+       glyphs. Re-assert text clipping explicitly. */
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    text-shadow: none;
+    animation: wordBurstVivid 0.6s cubic-bezier(0.34, 1.9, 0.5, 1) forwards,
+        wordShineVivid 1.6s ease-in-out forwards;
+}
+
+@keyframes lineGlowVivid {
+    0% {
+        filter: drop-shadow(0 0 0 transparent);
+    }
+    100% {
+        filter: drop-shadow(0 0 45px rgba(120, 180, 255, 0.55));
+    }
+}
+
+@keyframes wordBurstVivid {
+    0% {
+        opacity: 0;
+        transform: translate3d(0, 60px, 0) scale(0.7) rotateZ(-6deg);
+        filter: blur(18px);
+    }
+    60% {
+        opacity: 1;
+        transform: translate3d(0, -14px, 0) scale(1.18) rotateZ(2deg);
+        filter: blur(0);
+    }
+    80% {
+        transform: translate3d(0, 4px, 0) scale(0.96) rotateZ(-1deg);
+    }
+    100% {
+        opacity: 1;
+        transform: translate3d(0, 0, 0) scale(1) rotateZ(0deg);
+        filter: blur(0);
+    }
+}
+
+@keyframes wordShineVivid {
+    0% { background-position: 0% center; }
+    100% { background-position: 300% center; }
+}
+
+body[data-lyric-theme="vivid"] .lyric-word--revealed {
+    opacity: 0.45;
+    transform: translate3d(0, 0, 0) scale(1);
+    filter: blur(0);
+    background: linear-gradient(120deg, #ffffff 0%, #c8d9ff 45%, #ffffff 90%);
+    background-size: 200% auto;
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
 }
