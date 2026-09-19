@@ -19,8 +19,8 @@ jobs:
         include:
           # Cross-packaging a win32 target from Linux/macOS needs Wine to
           # inject the exe's version/icon resources, so build it natively
-          # on Windows instead. Same idea for macOS: build x64 and arm64
-          # each on their own native architecture runner.
+          # on Windows instead. macOS is a single universal (x64 + arm64)
+          # binary, merged by electron-packager via @electron/universal.
           - name: windows-x64
             os: windows-latest
             platform: win32
@@ -29,14 +29,10 @@ jobs:
             os: ubuntu-latest
             platform: linux
             arch: x64
-          - name: macos-x64
-            os: macos-13
-            platform: darwin
-            arch: x64
-          - name: macos-arm64
+          - name: macos-universal
             os: macos-14
             platform: darwin
-            arch: arm64
+            arch: universal
 
     steps:
       - name: Checkout
