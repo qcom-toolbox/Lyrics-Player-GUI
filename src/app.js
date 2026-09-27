@@ -38,6 +38,17 @@ lyricModeSelect.addEventListener('change', () => {
     currentLineIndex = -1; // force re-render on next tick
 });
 
+const commaBreakToggle = document.getElementById('comma-break-toggle');
+const COMMA_BREAK_STORAGE_KEY = 'pear-lyrics-comma-break';
+
+let commaBreak = localStorage.getItem(COMMA_BREAK_STORAGE_KEY) === 'true';
+commaBreakToggle.checked = commaBreak;
+commaBreakToggle.addEventListener('change', () => {
+    commaBreak = commaBreakToggle.checked;
+    localStorage.setItem(COMMA_BREAK_STORAGE_KEY, String(commaBreak));
+    currentLineIndex = -1; // force re-render on next tick
+});
+
 const lyricThemeSelect = document.getElementById('lyric-theme-select');
 const LYRIC_THEME_STORAGE_KEY = 'pear-lyrics-theme';
 
@@ -785,8 +796,51 @@ function parseLRCString(lrcText) {
     return processedLines.sort((a, b) => a.time - b.time);
 }
 
-function getLineStartMs(index) {
-    return cachedLyrics[index].time ?? 0;
+const LAST_LINE_FALLBACK_MS = 4000;
+
+// Time from a line's start until the next line — or, for the last line, until
+// the song ends, so a long outro still gets the music-note icon.
+function getLineAvailableMs(lines, index) {
+    const start = lines[index].time ?? 0;
+    if (index + 1 < lines.length) return (lines[index + 1].time ?? 0) - start;
+    const durationSec = lastPlayerState ? getTrackDurationSec(lastPlayerState) : null;
+    if (durationSec) return Math.max(LAST_LINE_FALLBACK_MS, durationSec * 1000 - start);
+    return LAST_LINE_FALLBACK_MS;
+}
+
+let displayLyricsMemo = { source: null, commaBreak: false, lines: null };
+
+// The lines actually rendered. With the comma option on, each lyric line is
+// split after every word ending in "," and the part that follows gets its own
+// timestamp — the moment the word before the comma finishes its slot.
+function getDisplayLyrics() {
+    const memo = displayLyricsMemo;
+    if (memo.source === cachedLyrics && memo.commaBreak === commaBreak) {
+        return memo.lines;
+    }
+    let lines = cachedLyrics;
+    if (commaBreak) {
+        lines = [];
+        cachedLyrics.forEach((line, i) => {
+            const words = getLineText(line).split(/\s+/).filter(Boolean);
+            const start = line.time ?? 0;
+            const availableMs = getLineAvailableMs(cachedLyrics, i);
+            const slotMs = getWordSlotMs(availableMs, words.length || 1);
+            let segStart = 0;
+            words.forEach((word, w) => {
+                if (word.endsWith(',') || w === words.length - 1) {
+                    lines.push({ time: start + segStart * slotMs, text: words.slice(segStart, w + 1).join(' ') });
+                    segStart = w + 1;
+                }
+            });
+        });
+    }
+    displayLyricsMemo = { source: cachedLyrics, commaBreak, lines };
+    return lines;
+}
+
+function getLineStartMs(lines, index) {
+    return lines[index].time ?? 0;
 }
 
 function getLineText(line) {
@@ -797,10 +851,11 @@ function getLineText(line) {
 
 function renderTimestamps(progressMs) {
     const syncMs = getSyncMs(progressMs);
+    const lines = getDisplayLyrics();
 
     let activeIndex = -1;
-    for (let i = 0; i < cachedLyrics.length; i++) {
-        if (syncMs >= getLineStartMs(i)) {
+    for (let i = 0; i < lines.length; i++) {
+        if (syncMs >= getLineStartMs(lines, i)) {
             activeIndex = i;
         } else {
             break;
@@ -824,14 +879,10 @@ function renderTimestamps(progressMs) {
         return;
     }
 
-    const text = getLineText(cachedLyrics[activeIndex]);
+    const text = getLineText(lines[activeIndex]);
     if (!text) return;
 
-    // Available time until the next line starts
-    let availableMs = 4000; // fallback for last line
-    if (activeIndex + 1 < cachedLyrics.length) {
-        availableMs = getLineStartMs(activeIndex + 1) - getLineStartMs(activeIndex);
-    }
+    const availableMs = getLineAvailableMs(lines, activeIndex);
 
     currentLineIndex = activeIndex;
     pulseBackground();
@@ -866,6 +917,15 @@ function applyWordChaos(span, lineIndex, wordIndex) {
 const INSTRUMENTAL_GAP_MS = 6000;
 const INSTRUMENTAL_ICON_DELAY_MS = 1500;
 
+// Each word gets an equal time slot, spread evenly across the whole line.
+// The cap only stops a line from crawling through a long instrumental gap —
+// past it, the leftover time goes to the music-note icon instead.
+const MAX_WORD_SLOT_MS = 1500;
+
+function getWordSlotMs(availableMs, wordCount) {
+    return Math.max(80, Math.min(MAX_WORD_SLOT_MS, availableMs / wordCount));
+}
+
 function startWordByWord(textString, availableMs, lineIndex) {
     clearWbwTimers();
     wbwLineIndex = lineIndex;
@@ -874,14 +934,7 @@ function startWordByWord(textString, availableMs, lineIndex) {
     const words = textString.split(/\s+/).filter(Boolean);
     if (!words.length) return;
 
-    const wordCount = words.length;
-
-    // Each word gets an equal time slot across the line duration
-    // Clamp slot between 80ms (very fast) and 600ms (slow/relaxed)
-    const rawSlotMs = availableMs / wordCount;
-    // Build-up mode runs a bit faster (max 400ms per word vs 600ms for word-by-word)
-    const maxSlotMs = lyricMode === 'build-up' ? 400 : 600;
-    const slotMs = Math.max(80, Math.min(maxSlotMs, rawSlotMs));
+    const slotMs = getWordSlotMs(availableMs, words.length);
 
     // The entrance animations are deliberately slow/heavy for a dramatic feel,
     // but they must still fully resolve (blur -> 0) before the word is swapped
@@ -891,30 +944,22 @@ function startWordByWord(textString, availableMs, lineIndex) {
     const burstMs = Math.max(120, Math.min(500, slotMs * 0.85));
     const lineMs = Math.max(160, Math.min(1300, slotMs * 0.95));
 
-    if (lyricMode === 'build-up') {
-        words.forEach((word, index) => {
-            const delay = index * slotMs;
-            const t = setTimeout(() => {
-                if (wbwLineIndex !== lineIndex) return;
+    words.forEach((word, index) => {
+        const t = setTimeout(() => {
+            if (wbwLineIndex !== lineIndex) return;
+            if (lyricMode === 'build-up') {
                 showBuildUp(words, index, burstMs, lineMs, lineIndex);
-            }, delay);
-            wbwTimers.push(t);
-        });
-    } else {
-        words.forEach((word, index) => {
-            const delay = index * slotMs;
-            const t = setTimeout(() => {
-                if (wbwLineIndex !== lineIndex) return;
+            } else {
                 showSingleWord(word, burstMs, lineMs, lineIndex, index);
-            }, delay);
-            wbwTimers.push(t);
-        });
-    }
+            }
+        }, index * slotMs);
+        wbwTimers.push(t);
+    });
 
     // If this line's words finish well before the next line actually starts
     // (a long instrumental break mid-song), swap to the music-note icon for
     // the remaining gap instead of leaving the last word frozen on screen.
-    const wordsEndMs = wordCount * slotMs;
+    const wordsEndMs = words.length * slotMs;
     const leftoverMs = availableMs - wordsEndMs;
     if (leftoverMs > INSTRUMENTAL_GAP_MS) {
         const iconDelay = wordsEndMs + INSTRUMENTAL_ICON_DELAY_MS;
