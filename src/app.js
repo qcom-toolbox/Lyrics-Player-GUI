@@ -39,6 +39,27 @@ maxLineInput.addEventListener('input', () => {
     const sec = parseFloat(maxLineInput.value);
     maxLineMs = Number.isNaN(sec) || sec < 0 ? 0 : sec * 1000;
     localStorage.setItem(MAX_LINE_STORAGE_KEY, String(maxLineMs / 1000));
+    updateNoteDelayAvailability();
+    currentLineIndex = -1; // force re-render on next tick
+});
+
+const noteDelayInput = document.getElementById('note-delay-input');
+const noteDelayGroup = document.getElementById('note-delay-group');
+const NOTE_DELAY_STORAGE_KEY = 'pear-lyrics-note-delay';
+
+// Extra time the text stays up after the max line time runs out, before the
+// music-note icon replaces it (0 = right away).
+function loadNoteDelayMs() {
+    const sec = parseFloat(localStorage.getItem(NOTE_DELAY_STORAGE_KEY));
+    return Number.isNaN(sec) || sec < 0 ? 0 : sec * 1000;
+}
+
+let noteDelayMs = loadNoteDelayMs();
+noteDelayInput.value = String(noteDelayMs / 1000);
+noteDelayInput.addEventListener('input', () => {
+    const sec = parseFloat(noteDelayInput.value);
+    noteDelayMs = Number.isNaN(sec) || sec < 0 ? 0 : sec * 1000;
+    localStorage.setItem(NOTE_DELAY_STORAGE_KEY, String(noteDelayMs / 1000));
     currentLineIndex = -1; // force re-render on next tick
 });
 
@@ -52,8 +73,19 @@ holdLineToggle.checked = holdLine;
 holdLineToggle.addEventListener('change', () => {
     holdLine = holdLineToggle.checked;
     localStorage.setItem(HOLD_LINE_STORAGE_KEY, String(holdLine));
+    updateNoteDelayAvailability();
     currentLineIndex = -1; // force re-render on next tick
 });
+
+// The note delay only matters when a max line time can actually end in the
+// music note, so grey it out otherwise.
+function updateNoteDelayAvailability() {
+    const usable = maxLineMs > 0 && !holdLine;
+    noteDelayInput.disabled = !usable;
+    noteDelayGroup.classList.toggle('control-group--disabled', !usable);
+}
+
+updateNoteDelayAvailability();
 
 const lyricModeSelect = document.getElementById('lyric-mode-select');
 const LYRIC_MODE_STORAGE_KEY = 'pear-lyrics-mode';
@@ -1385,8 +1417,10 @@ function startWordByWord(textString, availableMs, lineIndex) {
     const wordsEndMs = words.length * slotMs;
     const leftoverMs = availableMs - wordsEndMs;
     let iconDelay = leftoverMs > INSTRUMENTAL_GAP_MS ? wordsEndMs + INSTRUMENTAL_ICON_DELAY_MS : Infinity;
+    // When a max line time applies it decides the timing on its own, so the
+    // line really stays up that long, plus the note delay.
     if (maxLineMs > 0 && availableMs > maxLineMs) {
-        iconDelay = Math.min(iconDelay, Math.max(wordsEndMs, maxLineMs));
+        iconDelay = Math.max(wordsEndMs, maxLineMs) + noteDelayMs;
     }
     if (iconDelay < availableMs && !holdLine) {
         const t = setTimeout(() => {

@@ -31,6 +31,10 @@
             <label for="max-line-input" title="Longest a lyric line stays on screen before the music note takes over. 0 = no limit">Max Line (s):</label>
             <input type="number" id="max-line-input" value="0" step="0.5" min="0" max="60">
         </div>
+        <div class="control-group" id="note-delay-group">
+            <label for="note-delay-input" title="Extra seconds the text stays up after Max Line runs out before the music note shows. 0 = show it right away. Only used when Max Line is set and Hold Until Next Line is off">Note Delay (s):</label>
+            <input type="number" id="note-delay-input" value="0" step="0.5" min="0" max="60">
+        </div>
         <div class="control-group">
             <label for="hold-line-toggle" title="When a line's time runs out, keep its text on screen until the next line instead of showing the music note">Hold Until Next Line</label>
             <input type="checkbox" id="hold-line-toggle">

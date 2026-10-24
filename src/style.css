@@ -94,12 +94,15 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
     font-size: 0.85rem; font-weight: 500; color: #b3b3b3;
 }
 
+.control-group--disabled { opacity: 0.4; }
+
 .panel-divider { border: 0; height: 1px; background: var(--glass-border); margin: 2px 0; }
 
 #host-input,
 #port-input,
 #sync-offset-input,
-#max-line-input {
+#max-line-input,
+#note-delay-input {
     background: rgba(0, 0, 0, 0.5); border: 1px solid var(--glass-border);
     color: #fff; padding: 5px 8px; border-radius: 6px;
     font-weight: bold; outline: none;
@@ -112,11 +115,13 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
 }
 #port-input { width: 80px; text-align: center; }
 #sync-offset-input,
-#max-line-input { width: 58px; }
+#max-line-input,
+#note-delay-input { width: 58px; }
 #host-input:focus,
 #port-input:focus,
 #sync-offset-input:focus,
-#max-line-input:focus { border-color: rgba(255,255,255,0.3); }
+#max-line-input:focus,
+#note-delay-input:focus { border-color: rgba(255,255,255,0.3); }
 
 #lyric-mode-select,
 #audio-source-select {
