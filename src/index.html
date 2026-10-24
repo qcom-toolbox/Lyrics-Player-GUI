@@ -72,11 +72,15 @@
             </label>
         </div>
         <hr class="panel-divider">
-        <div class="control-group hidden" id="gpu-group">
+        <div class="control-group hidden render-setting">
             <label for="gpu-toggle" title="Render the background, lyrics and visualizer on the graphics card. Turn off if you see glitches or a black window. Needs a restart.">GPU Acceleration</label>
             <input type="checkbox" id="gpu-toggle">
         </div>
-        <div id="gpu-status" class="gpu-status hidden"></div>
+        <div class="control-group hidden render-setting">
+            <label for="vsync-toggle" title="Sync frames to the display's refresh rate so animations never tear. Off uncaps the frame rate. Needs a restart.">VSync</label>
+            <input type="checkbox" id="vsync-toggle">
+        </div>
+        <div id="gpu-status" class="gpu-status hidden render-setting"></div>
         <hr class="panel-divider">
         <div class="control-group">
             <label>Show Debug Info</label>

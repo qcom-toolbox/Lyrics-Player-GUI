@@ -810,36 +810,68 @@ async function resolveAndCacheCover(state) {
     }
 }
 
-// --- GPU acceleration --------------------------------------------------------
-// The switch lives in the main process (Chromium's GPU flags are fixed at
+// --- GPU acceleration & VSync -------------------------------------------------
+// Both switches live in the main process (Chromium's GPU flags are fixed at
 // launch), reached through the preload bridge. Hidden when the page runs
-// outside the Electron app.
-const gpuGroup = document.getElementById('gpu-group');
+// outside the Electron app. The status line also shows the measured frame
+// rate, so the effect of either switch is visible.
+const renderSettingEls = document.querySelectorAll('.render-setting');
 const gpuToggle = document.getElementById('gpu-toggle');
+const vsyncToggle = document.getElementById('vsync-toggle');
 const gpuStatus = document.getElementById('gpu-status');
+let renderStatusText = '';
+let measuredFps = 0;
+let fpsFrames = 0;
+let fpsWindowStart = 0;
 
-function describeGpuStatus({ enabled, features }) {
+function describeRenderStatus({ gpuAcceleration, vsync, features }) {
     const onGpu = String(features?.gpu_compositing || '').startsWith('enabled');
-    if (!enabled) return 'Software rendering (GPU off)';
-    return onGpu ? 'Rendering on the GPU' : 'GPU unavailable — rendering in software';
+    const mode = !gpuAcceleration ? 'Software rendering (GPU off)'
+        : onGpu ? 'Rendering on the GPU' : 'GPU unavailable — rendering in software';
+    return `${mode} · VSync ${vsync ? 'on' : 'off'}`;
 }
 
-async function initGpuToggle() {
-    if (!window.pearLyrics?.getGpuStatus) return;
-    const status = await window.pearLyrics.getGpuStatus();
-    gpuGroup.classList.remove('hidden');
-    gpuStatus.classList.remove('hidden');
-    gpuToggle.checked = status.enabled;
-    gpuStatus.textContent = describeGpuStatus(status);
+function showRenderStatus() {
+    gpuStatus.textContent = measuredFps ? `${renderStatusText} · ${measuredFps} fps` : renderStatusText;
+}
 
-    gpuToggle.addEventListener('change', () => {
-        const restartNow = window.confirm('Restart PearLyrics now to apply the GPU setting?');
-        window.pearLyrics.setGpuEnabled(gpuToggle.checked, restartNow);
-        if (!restartNow) gpuStatus.textContent = 'Applies on next launch';
+// Called once per animation frame from renderLoop.
+function countFrame(now) {
+    if (!renderStatusText) return;
+    fpsFrames++;
+    if (!fpsWindowStart) fpsWindowStart = now;
+    if (now - fpsWindowStart < 1000) return;
+    const fps = Math.round(fpsFrames * 1000 / (now - fpsWindowStart));
+    fpsFrames = 0;
+    fpsWindowStart = now;
+    if (fps !== measuredFps) {
+        measuredFps = fps;
+        showRenderStatus();
+    }
+}
+
+function bindRenderToggle(toggle, key, label) {
+    toggle.addEventListener('change', () => {
+        const restartNow = window.confirm(`Restart PearLyrics now to apply the ${label} setting?`);
+        window.pearLyrics.setRenderSetting(key, toggle.checked, restartNow);
+        if (!restartNow) renderStatusText = 'Applies on next launch';
+        showRenderStatus();
     });
 }
 
-initGpuToggle();
+async function initRenderSettings() {
+    if (!window.pearLyrics?.getRenderStatus) return;
+    const status = await window.pearLyrics.getRenderStatus();
+    renderSettingEls.forEach((el) => el.classList.remove('hidden'));
+    gpuToggle.checked = status.gpuAcceleration;
+    vsyncToggle.checked = status.vsync;
+    renderStatusText = describeRenderStatus(status);
+    showRenderStatus();
+    bindRenderToggle(gpuToggle, 'gpuAcceleration', 'GPU');
+    bindRenderToggle(vsyncToggle, 'vsync', 'VSync');
+}
+
+initRenderSettings();
 
 debugToggle.addEventListener('change', (e) => {
     debugTerminal.classList.toggle('hidden', !e.target.checked);
@@ -1435,7 +1467,9 @@ function renderLoop() {
     if (cachedLyrics?.length && lastPlayerState) {
         renderTimestamps(getInterpolatedPlaybackMs());
     }
-    updateUptempo(performance.now());
+    const now = performance.now();
+    updateUptempo(now);
+    countFrame(now);
     requestAnimationFrame(renderLoop);
 }
 

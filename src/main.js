@@ -24,7 +24,8 @@ function saveSettings(settings) {
 // visualizer canvas stay on the GPU even on drivers Chromium is wary of.
 // Turning it off falls back to software rendering, for setups where a
 // driver misbehaves.
-const gpuAcceleration = loadSettings().gpuAcceleration !== false;
+const settings = loadSettings();
+const gpuAcceleration = settings.gpuAcceleration !== false;
 if (gpuAcceleration) {
   app.commandLine.appendSwitch('ignore-gpu-blocklist');
   app.commandLine.appendSwitch('enable-gpu-rasterization');
@@ -33,13 +34,27 @@ if (gpuAcceleration) {
   app.disableHardwareAcceleration();
 }
 
-ipcMain.handle('gpu:get-status', () => ({
-  enabled: gpuAcceleration,
+// VSync: on by default (Chromium's normal behavior) — frames are presented in
+// step with the display's refresh, so animations never tear. Turning it off
+// uncaps the frame rate, for benchmarking or high-refresh setups that want
+// every frame they can get.
+const vsync = settings.vsync !== false;
+if (!vsync) {
+  app.commandLine.appendSwitch('disable-gpu-vsync');
+  app.commandLine.appendSwitch('disable-frame-rate-limit');
+}
+
+const RENDER_SETTINGS = ['gpuAcceleration', 'vsync'];
+
+ipcMain.handle('render:get-status', () => ({
+  gpuAcceleration,
+  vsync,
   features: app.getGPUFeatureStatus(),
 }));
 
-ipcMain.handle('gpu:set-enabled', (event, enabled, restartNow) => {
-  saveSettings({ ...loadSettings(), gpuAcceleration: Boolean(enabled) });
+ipcMain.handle('render:set', (event, key, enabled, restartNow) => {
+  if (!RENDER_SETTINGS.includes(key)) return;
+  saveSettings({ ...loadSettings(), [key]: Boolean(enabled) });
   if (restartNow) {
     app.relaunch();
     app.exit(0);
