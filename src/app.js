@@ -80,6 +80,25 @@ holdLineToggle.addEventListener('change', () => {
     currentLineIndex = -1; // force re-render on next tick
 });
 
+const endEarlyInput = document.getElementById('end-early-input');
+const END_EARLY_STORAGE_KEY = 'pear-lyrics-end-early';
+
+// Cut this much off the end of every line's time: its words play faster and
+// the text fades out before the next line starts (0 = off).
+function loadEndEarlyMs() {
+    const sec = parseFloat(localStorage.getItem(END_EARLY_STORAGE_KEY));
+    return Number.isNaN(sec) || sec < 0 ? 0 : sec * 1000;
+}
+
+let endEarlyMs = loadEndEarlyMs();
+endEarlyInput.value = String(endEarlyMs / 1000);
+endEarlyInput.addEventListener('input', () => {
+    const sec = parseFloat(endEarlyInput.value);
+    endEarlyMs = Number.isNaN(sec) || sec < 0 ? 0 : sec * 1000;
+    localStorage.setItem(END_EARLY_STORAGE_KEY, String(endEarlyMs / 1000));
+    currentLineIndex = -1; // force re-render on next tick
+});
+
 // Holding the text until the next line means the music note never shows, so
 // the note delay has nothing to do — grey it out.
 function updateNoteDelayAvailability() {
@@ -1365,6 +1384,7 @@ function applyWordChaos(span, lineIndex, wordIndex) {
 // A gap between lines longer than this is treated as an instrumental break —
 // the music-note icon replaces the lingering last word for the remainder.
 const INSTRUMENTAL_GAP_MS = 6000;
+const MIN_LINE_MS = 500;
 
 // Each word gets an equal time slot, spread evenly across the whole line.
 // The cap only stops a line from crawling through a long instrumental gap —
@@ -1389,7 +1409,12 @@ function startWordByWord(textString, availableMs, lineIndex) {
     const words = textString.split(/\s+/).filter(Boolean);
     if (!words.length) return;
 
-    const slotMs = getWordSlotMs(getLineBudgetMs(availableMs), words.length);
+    // End Early shortens the line's whole time, never below half a second
+    // (or the line's own time, if that's shorter).
+    const lineEndMs = endEarlyMs > 0
+        ? Math.max(Math.min(availableMs, MIN_LINE_MS), availableMs - endEarlyMs)
+        : availableMs;
+    const slotMs = getWordSlotMs(getLineBudgetMs(lineEndMs), words.length);
 
     // The entrance animations are deliberately slow/heavy for a dramatic feel,
     // but they must still fully resolve (blur -> 0) before the word is swapped
@@ -1418,16 +1443,27 @@ function startWordByWord(textString, availableMs, lineIndex) {
     // Hold Until Next Line keeps the text up instead.
     const wordsEndMs = words.length * slotMs;
     let iconDelay = Infinity;
-    if (maxLineMs > 0 && availableMs > maxLineMs) {
+    if (maxLineMs > 0 && lineEndMs > maxLineMs) {
         iconDelay = Math.max(wordsEndMs, maxLineMs) + noteDelayMs;
-    } else if (availableMs - wordsEndMs > INSTRUMENTAL_GAP_MS) {
+    } else if (lineEndMs - wordsEndMs > INSTRUMENTAL_GAP_MS) {
         iconDelay = wordsEndMs + noteDelayMs;
     }
-    if (!holdLine && iconDelay < availableMs) {
+    const showsIcon = !holdLine && iconDelay < lineEndMs;
+    if (showsIcon) {
         const t = setTimeout(() => {
             if (wbwLineIndex !== lineIndex) return;
             showInstrumentalIcon(lineIndex);
         }, iconDelay);
+        wbwTimers.push(t);
+    }
+
+    // End Early: fade the text out before the next line. The music note, if
+    // it took over, stays — the break isn't over yet.
+    if (!holdLine && !showsIcon && lineEndMs < availableMs) {
+        const t = setTimeout(() => {
+            if (wbwLineIndex !== lineIndex) return;
+            lyricsTarget.firstElementChild?.classList.add('lyric-line--out');
+        }, lineEndMs);
         wbwTimers.push(t);
     }
 }

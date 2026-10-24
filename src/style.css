@@ -102,7 +102,8 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
 #port-input,
 #sync-offset-input,
 #max-line-input,
-#note-delay-input {
+#note-delay-input,
+#end-early-input {
     background: rgba(0, 0, 0, 0.5); border: 1px solid var(--glass-border);
     color: #fff; padding: 5px 8px; border-radius: 6px;
     font-weight: bold; outline: none;
@@ -116,12 +117,14 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
 #port-input { width: 80px; text-align: center; }
 #sync-offset-input,
 #max-line-input,
-#note-delay-input { width: 58px; }
+#note-delay-input,
+#end-early-input { width: 58px; }
 #host-input:focus,
 #port-input:focus,
 #sync-offset-input:focus,
 #max-line-input:focus,
-#note-delay-input:focus { border-color: rgba(255,255,255,0.3); }
+#note-delay-input:focus,
+#end-early-input:focus { border-color: rgba(255,255,255,0.3); }
 
 #lyric-mode-select,
 #audio-source-select {
@@ -270,6 +273,15 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
 
 .lyric-line--live.instrumental-icon {
     animation: lineGlow 1.3s ease-out forwards, iconBreathe 2.4s ease-in-out 1.3s infinite;
+}
+
+/* End Early — the line fades out before the next one starts. */
+.lyric-line.lyric-line--out {
+    animation: lineFadeOut 0.4s ease forwards !important;
+}
+
+@keyframes lineFadeOut {
+    to { opacity: 0; transform: translate3d(0, -12px, 0); filter: blur(8px); }
 }
 
 @keyframes iconBreathe {
