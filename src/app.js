@@ -109,6 +109,33 @@ function updateNoteDelayAvailability() {
 
 updateNoteDelayAvailability();
 
+const noLyricsNoteToggle = document.getElementById('no-lyrics-note-toggle');
+const NO_LYRICS_NOTE_STORAGE_KEY = 'pear-lyrics-no-lyrics-note';
+
+// Show the music note instead of a text message while lyrics are being
+// searched for or when none exist, with the lyrics status written
+// underneath — also under the intro note of a track whose lyrics were found.
+let noLyricsNote = localStorage.getItem(NO_LYRICS_NOTE_STORAGE_KEY) === 'true';
+noLyricsNoteToggle.checked = noLyricsNote;
+noLyricsNoteToggle.addEventListener('change', () => {
+    noLyricsNote = noLyricsNoteToggle.checked;
+    localStorage.setItem(NO_LYRICS_NOTE_STORAGE_KEY, String(noLyricsNote));
+    currentLineIndex = -1; // force re-render on next tick
+});
+
+const LYRICS_STATUS_TEXT = {
+    searching: 'Searching for lyrics…',
+    none: 'No lyrics found',
+    found: 'Lyrics found',
+};
+
+// The status note is re-requested on every player poll, so only rebuild it
+// when the status changes — otherwise its entrance animation would restart.
+function showLyricsStatusNote(status) {
+    if (lyricsTarget.querySelector(`.lyric-caption[data-status="${status}"]`)) return;
+    showInstrumentalIcon(-3, status);
+}
+
 const lyricModeSelect = document.getElementById('lyric-mode-select');
 const LYRIC_MODE_STORAGE_KEY = 'pear-lyrics-mode';
 
@@ -1168,14 +1195,22 @@ function processTrackState(state) {
 
     if ((!cachedLyrics || cachedLyrics.length === 0) && !isFetchingFallback && !fallbackFailed && state.title) {
         fetchOnlineSyncedFallback(state);
-        lyricsTarget.innerHTML = `<div class="lyric-line animation-pulse" style="font-size: 2.2rem; opacity: 0.6;">Searching synced lyrics...</div>`;
+        if (noLyricsNote) {
+            showLyricsStatusNote('searching');
+        } else {
+            lyricsTarget.innerHTML = `<div class="lyric-line animation-pulse" style="font-size: 2.2rem; opacity: 0.6;">Searching synced lyrics...</div>`;
+        }
         return;
     }
 
     if (!cachedLyrics || cachedLyrics.length === 0) {
         if (isFetchingFallback) return;
         lastPlayerState = null;
-        lyricsTarget.innerHTML = `<div class="lyric-line" style="opacity: 0.4; font-size: 2.2rem;">No synced lines found for this track</div>`;
+        if (noLyricsNote) {
+            showLyricsStatusNote('none');
+        } else {
+            lyricsTarget.innerHTML = `<div class="lyric-line" style="opacity: 0.4; font-size: 2.2rem;">No synced lines found for this track</div>`;
+        }
         return;
     }
 
@@ -1339,7 +1374,7 @@ function renderTimestamps(progressMs) {
             currentLineIndex = -2;
             clearWbwTimers();
             wbwLineIndex = -2;
-            showInstrumentalIcon(-2);
+            showInstrumentalIcon(-2, noLyricsNote ? 'found' : null);
         }
         return;
     }
@@ -1468,7 +1503,9 @@ function startWordByWord(textString, availableMs, lineIndex) {
     }
 }
 
-function showInstrumentalIcon(lineIndex) {
+// `status` (optional) adds the lyrics status underneath — see
+// LYRICS_STATUS_TEXT.
+function showInstrumentalIcon(lineIndex, status = null) {
     lyricsTarget.innerHTML = '';
 
     const lineWrapper = document.createElement('div');
@@ -1484,6 +1521,14 @@ function showInstrumentalIcon(lineIndex) {
 
     lineWrapper.appendChild(span);
     lyricsTarget.appendChild(lineWrapper);
+
+    if (status) {
+        const caption = document.createElement('div');
+        caption.className = 'lyric-caption';
+        caption.dataset.status = status;
+        caption.textContent = LYRICS_STATUS_TEXT[status];
+        lyricsTarget.appendChild(caption);
+    }
 }
 
 function showSingleWord(word, burstMs, lineMs, lineIndex, wordIndex) {
