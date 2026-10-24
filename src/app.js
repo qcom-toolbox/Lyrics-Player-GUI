@@ -39,7 +39,6 @@ maxLineInput.addEventListener('input', () => {
     const sec = parseFloat(maxLineInput.value);
     maxLineMs = Number.isNaN(sec) || sec < 0 ? 0 : sec * 1000;
     localStorage.setItem(MAX_LINE_STORAGE_KEY, String(maxLineMs / 1000));
-    updateNoteDelayAvailability();
     currentLineIndex = -1; // force re-render on next tick
 });
 
@@ -47,11 +46,15 @@ const noteDelayInput = document.getElementById('note-delay-input');
 const noteDelayGroup = document.getElementById('note-delay-group');
 const NOTE_DELAY_STORAGE_KEY = 'pear-lyrics-note-delay';
 
-// Extra time the text stays up after the max line time runs out, before the
+const DEFAULT_NOTE_DELAY_SEC = 1.5;
+
+// How long the text stays up once a line is done — its words finished
+// before a long instrumental gap, or its max line time ran out — before the
 // music-note icon replaces it (0 = right away).
 function loadNoteDelayMs() {
-    const sec = parseFloat(localStorage.getItem(NOTE_DELAY_STORAGE_KEY));
-    return Number.isNaN(sec) || sec < 0 ? 0 : sec * 1000;
+    const stored = localStorage.getItem(NOTE_DELAY_STORAGE_KEY);
+    const sec = stored == null ? DEFAULT_NOTE_DELAY_SEC : parseFloat(stored);
+    return Number.isNaN(sec) || sec < 0 ? DEFAULT_NOTE_DELAY_SEC * 1000 : sec * 1000;
 }
 
 let noteDelayMs = loadNoteDelayMs();
@@ -77,10 +80,10 @@ holdLineToggle.addEventListener('change', () => {
     currentLineIndex = -1; // force re-render on next tick
 });
 
-// The note delay only matters when a max line time can actually end in the
-// music note, so grey it out otherwise.
+// Holding the text until the next line means the music note never shows, so
+// the note delay has nothing to do — grey it out.
 function updateNoteDelayAvailability() {
-    const usable = maxLineMs > 0 && !holdLine;
+    const usable = !holdLine;
     noteDelayInput.disabled = !usable;
     noteDelayGroup.classList.toggle('control-group--disabled', !usable);
 }
@@ -1362,7 +1365,6 @@ function applyWordChaos(span, lineIndex, wordIndex) {
 // A gap between lines longer than this is treated as an instrumental break —
 // the music-note icon replaces the lingering last word for the remainder.
 const INSTRUMENTAL_GAP_MS = 6000;
-const INSTRUMENTAL_ICON_DELAY_MS = 1500;
 
 // Each word gets an equal time slot, spread evenly across the whole line.
 // The cap only stops a line from crawling through a long instrumental gap —
@@ -1409,20 +1411,19 @@ function startWordByWord(textString, availableMs, lineIndex) {
         wbwTimers.push(t);
     });
 
-    // If this line's words finish well before the next line actually starts
-    // (a long instrumental break mid-song), swap to the music-note icon for
-    // the remaining gap instead of leaving the last word frozen on screen.
-    // A max line time does the same once it runs out — unless the user
-    // chose to hold the text until the next line.
+    // Once the line is done, the music-note icon takes over after the note
+    // delay, instead of leaving the last word frozen on screen. "Done" is
+    // when its max line time runs out, or — without one — when its words
+    // finish well before the next line (a long instrumental break).
+    // Hold Until Next Line keeps the text up instead.
     const wordsEndMs = words.length * slotMs;
-    const leftoverMs = availableMs - wordsEndMs;
-    let iconDelay = leftoverMs > INSTRUMENTAL_GAP_MS ? wordsEndMs + INSTRUMENTAL_ICON_DELAY_MS : Infinity;
-    // When a max line time applies it decides the timing on its own, so the
-    // line really stays up that long, plus the note delay.
+    let iconDelay = Infinity;
     if (maxLineMs > 0 && availableMs > maxLineMs) {
         iconDelay = Math.max(wordsEndMs, maxLineMs) + noteDelayMs;
+    } else if (availableMs - wordsEndMs > INSTRUMENTAL_GAP_MS) {
+        iconDelay = wordsEndMs + noteDelayMs;
     }
-    if (iconDelay < availableMs && !holdLine) {
+    if (!holdLine && iconDelay < availableMs) {
         const t = setTimeout(() => {
             if (wbwLineIndex !== lineIndex) return;
             showInstrumentalIcon(lineIndex);
