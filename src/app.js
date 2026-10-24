@@ -23,6 +23,25 @@ const ART_CACHE_STORAGE_KEY = 'pear-art-cache-v1';
 const ART_CACHE_MAX_ENTRIES = 60;
 const ART_MAX_BLOB_BYTES = 280000;
 
+const maxLineInput = document.getElementById('max-line-input');
+const MAX_LINE_STORAGE_KEY = 'pear-lyrics-max-line';
+
+// Longest a line may stay on screen, in ms (0 = no limit). Its words are
+// spread over at most this long, then the music-note icon takes over.
+function loadMaxLineMs() {
+    const sec = parseFloat(localStorage.getItem(MAX_LINE_STORAGE_KEY));
+    return Number.isNaN(sec) || sec < 0 ? 0 : sec * 1000;
+}
+
+let maxLineMs = loadMaxLineMs();
+maxLineInput.value = String(maxLineMs / 1000);
+maxLineInput.addEventListener('input', () => {
+    const sec = parseFloat(maxLineInput.value);
+    maxLineMs = Number.isNaN(sec) || sec < 0 ? 0 : sec * 1000;
+    localStorage.setItem(MAX_LINE_STORAGE_KEY, String(maxLineMs / 1000));
+    currentLineIndex = -1; // force re-render on next tick
+});
+
 const lyricModeSelect = document.getElementById('lyric-mode-select');
 const LYRIC_MODE_STORAGE_KEY = 'pear-lyrics-mode';
 
@@ -1120,14 +1139,14 @@ function getLineAvailableMs(lines, index) {
     return LAST_LINE_FALLBACK_MS;
 }
 
-let displayLyricsMemo = { source: null, commaBreak: false, lines: null };
+let displayLyricsMemo = { source: null, commaBreak: false, maxLineMs: 0, lines: null };
 
 // The lines actually rendered. With the comma option on, each lyric line is
 // split after every word ending in "," and the part that follows gets its own
 // timestamp — the moment the word before the comma finishes its slot.
 function getDisplayLyrics() {
     const memo = displayLyricsMemo;
-    if (memo.source === cachedLyrics && memo.commaBreak === commaBreak) {
+    if (memo.source === cachedLyrics && memo.commaBreak === commaBreak && memo.maxLineMs === maxLineMs) {
         return memo.lines;
     }
     let lines = cachedLyrics;
@@ -1137,7 +1156,7 @@ function getDisplayLyrics() {
             const words = getLineText(line).split(/\s+/).filter(Boolean);
             const start = line.time ?? 0;
             const availableMs = getLineAvailableMs(cachedLyrics, i);
-            const slotMs = getWordSlotMs(availableMs, words.length || 1);
+            const slotMs = getWordSlotMs(getLineBudgetMs(availableMs), words.length || 1);
             let segStart = 0;
             words.forEach((word, w) => {
                 if (word.endsWith(',') || w === words.length - 1) {
@@ -1147,7 +1166,7 @@ function getDisplayLyrics() {
             });
         });
     }
-    displayLyricsMemo = { source: cachedLyrics, commaBreak, lines };
+    displayLyricsMemo = { source: cachedLyrics, commaBreak, maxLineMs, lines };
     return lines;
 }
 
@@ -1234,6 +1253,12 @@ const INSTRUMENTAL_ICON_DELAY_MS = 1500;
 // past it, the leftover time goes to the music-note icon instead.
 const MAX_WORD_SLOT_MS = 1500;
 
+// The time a line's words get spread over: the gap until the next line,
+// shortened to the user's max line time when one is set.
+function getLineBudgetMs(availableMs) {
+    return maxLineMs > 0 ? Math.min(availableMs, maxLineMs) : availableMs;
+}
+
 function getWordSlotMs(availableMs, wordCount) {
     return Math.max(80, Math.min(MAX_WORD_SLOT_MS, availableMs / wordCount));
 }
@@ -1246,7 +1271,7 @@ function startWordByWord(textString, availableMs, lineIndex) {
     const words = textString.split(/\s+/).filter(Boolean);
     if (!words.length) return;
 
-    const slotMs = getWordSlotMs(availableMs, words.length);
+    const slotMs = getWordSlotMs(getLineBudgetMs(availableMs), words.length);
 
     // The entrance animations are deliberately slow/heavy for a dramatic feel,
     // but they must still fully resolve (blur -> 0) before the word is swapped
@@ -1271,10 +1296,14 @@ function startWordByWord(textString, availableMs, lineIndex) {
     // If this line's words finish well before the next line actually starts
     // (a long instrumental break mid-song), swap to the music-note icon for
     // the remaining gap instead of leaving the last word frozen on screen.
+    // A max line time does the same once it runs out.
     const wordsEndMs = words.length * slotMs;
     const leftoverMs = availableMs - wordsEndMs;
-    if (leftoverMs > INSTRUMENTAL_GAP_MS) {
-        const iconDelay = wordsEndMs + INSTRUMENTAL_ICON_DELAY_MS;
+    let iconDelay = leftoverMs > INSTRUMENTAL_GAP_MS ? wordsEndMs + INSTRUMENTAL_ICON_DELAY_MS : Infinity;
+    if (maxLineMs > 0 && availableMs > maxLineMs) {
+        iconDelay = Math.min(iconDelay, Math.max(wordsEndMs, maxLineMs));
+    }
+    if (iconDelay < availableMs) {
         const t = setTimeout(() => {
             if (wbwLineIndex !== lineIndex) return;
             showInstrumentalIcon(lineIndex);

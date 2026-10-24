@@ -97,7 +97,8 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
 
 #host-input,
 #port-input,
-#sync-offset-input {
+#sync-offset-input,
+#max-line-input {
     background: rgba(0, 0, 0, 0.5); border: 1px solid var(--glass-border);
     color: #fff; padding: 5px 8px; border-radius: 6px;
     font-weight: bold; outline: none;
@@ -109,10 +110,12 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
     font-size: 0.8rem;
 }
 #port-input { width: 80px; text-align: center; }
-#sync-offset-input { width: 58px; }
+#sync-offset-input,
+#max-line-input { width: 58px; }
 #host-input:focus,
 #port-input:focus,
-#sync-offset-input:focus { border-color: rgba(255,255,255,0.3); }
+#sync-offset-input:focus,
+#max-line-input:focus { border-color: rgba(255,255,255,0.3); }
 
 #lyric-mode-select,
 #audio-source-select {
