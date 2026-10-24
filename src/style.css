@@ -127,6 +127,7 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
 #end-early-input:focus { border-color: rgba(255,255,255,0.3); }
 
 #lyric-mode-select,
+#lyric-theme-select,
 #audio-source-select {
     background: rgba(0, 0, 0, 0.5);
     border: 1px solid var(--glass-border);
@@ -139,6 +140,7 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
     font-size: 0.8rem;
 }
 #lyric-mode-select:focus,
+#lyric-theme-select:focus,
 #audio-source-select:focus { border-color: rgba(255,255,255,0.3); }
 #audio-source-select { max-width: 150px; text-overflow: ellipsis; }
 
