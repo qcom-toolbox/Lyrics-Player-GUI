@@ -206,7 +206,7 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
     -webkit-text-fill-color: transparent;
     text-shadow: 0 0 44px rgba(var(--alb-m-glow, 160, 120, 210), 0.55), 0 8px 60px rgba(0, 0, 0, 0.6);
     animation: wordBurst 0.5s cubic-bezier(0.19, 0.75, 0.22, 1) forwards,
-        wordShine 1.8s ease-in-out forwards;
+        wordShine 1.8s ease-in-out infinite alternate;
 }
 
 @keyframes lineGlow {
@@ -240,6 +240,8 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
     }
 }
 
+/* The shine sweeps to the last letter and back, forever — alternating so
+   the gradient never jumps back to the start. */
 @keyframes wordShine {
     0% { background-position: 0% center; }
     100% { background-position: 280% center; }
@@ -318,7 +320,7 @@ body[data-lyric-theme="vivid"] .lyric-word {
     -webkit-text-fill-color: transparent;
     text-shadow: none;
     animation: wordBurstVivid 0.6s cubic-bezier(0.34, 1.9, 0.5, 1) forwards,
-        wordShineVivid 1.6s ease-in-out forwards;
+        wordShineVivid 1.6s ease-in-out infinite alternate;
 }
 
 body[data-lyric-theme="vivid"] .lyric-line--live.instrumental-icon {
