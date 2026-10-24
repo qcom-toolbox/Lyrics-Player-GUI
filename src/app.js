@@ -707,6 +707,15 @@ function drawCava(dt) {
     cavaCtx.fill();
 }
 
+// Writing a custom property restyles everything that inherits it, so skip
+// the write when the rounded value hasn't moved (e.g. between beats).
+const beatVarCache = {};
+function setBeatVar(name, value) {
+    if (beatVarCache[name] === value) return;
+    beatVarCache[name] = value;
+    document.documentElement.style.setProperty(name, value);
+}
+
 function updateUptempo(now) {
     if (!uptempo) return;
     const dt = Math.min(0.1, (now - (beat.lastFrame || now)) / 1000);
@@ -715,11 +724,10 @@ function updateUptempo(now) {
     beat.snare *= Math.exp(-dt / SNARE_DECAY_SEC);
     if (beatAnalyser) detectBeats(now);
 
-    const root = document.documentElement.style;
-    root.setProperty('--kick', beat.kick.toFixed(3));
-    root.setProperty('--snare', beat.snare.toFixed(3));
-    root.setProperty('--bass', beat.bass.toFixed(3));
-    root.setProperty('--shake-dir', String(beat.shakeDir));
+    setBeatVar('--kick', beat.kick.toFixed(3));
+    setBeatVar('--snare', beat.snare.toFixed(3));
+    setBeatVar('--bass', beat.bass.toFixed(3));
+    setBeatVar('--shake-dir', String(beat.shakeDir));
     drawCava(dt);
 }
 
@@ -788,6 +796,37 @@ async function resolveAndCacheCover(state) {
         // Pear / YouTube URL still shown if image fetch is blocked
     }
 }
+
+// --- GPU acceleration --------------------------------------------------------
+// The switch lives in the main process (Chromium's GPU flags are fixed at
+// launch), reached through the preload bridge. Hidden when the page runs
+// outside the Electron app.
+const gpuGroup = document.getElementById('gpu-group');
+const gpuToggle = document.getElementById('gpu-toggle');
+const gpuStatus = document.getElementById('gpu-status');
+
+function describeGpuStatus({ enabled, features }) {
+    const onGpu = String(features?.gpu_compositing || '').startsWith('enabled');
+    if (!enabled) return 'Software rendering (GPU off)';
+    return onGpu ? 'Rendering on the GPU' : 'GPU unavailable — rendering in software';
+}
+
+async function initGpuToggle() {
+    if (!window.pearLyrics?.getGpuStatus) return;
+    const status = await window.pearLyrics.getGpuStatus();
+    gpuGroup.classList.remove('hidden');
+    gpuStatus.classList.remove('hidden');
+    gpuToggle.checked = status.enabled;
+    gpuStatus.textContent = describeGpuStatus(status);
+
+    gpuToggle.addEventListener('change', () => {
+        const restartNow = window.confirm('Restart PearLyrics now to apply the GPU setting?');
+        window.pearLyrics.setGpuEnabled(gpuToggle.checked, restartNow);
+        if (!restartNow) gpuStatus.textContent = 'Applies on next launch';
+    });
+}
+
+initGpuToggle();
 
 debugToggle.addEventListener('change', (e) => {
     debugTerminal.classList.toggle('hidden', !e.target.checked);

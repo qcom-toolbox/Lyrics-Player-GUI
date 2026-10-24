@@ -68,6 +68,12 @@
             </label>
         </div>
         <hr class="panel-divider">
+        <div class="control-group hidden" id="gpu-group">
+            <label for="gpu-toggle" title="Render the background, lyrics and visualizer on the graphics card. Turn off if you see glitches or a black window. Needs a restart.">GPU Acceleration</label>
+            <input type="checkbox" id="gpu-toggle">
+        </div>
+        <div id="gpu-status" class="gpu-status hidden"></div>
+        <hr class="panel-divider">
         <div class="control-group">
             <label>Show Debug Info</label>
             <input type="checkbox" id="debug-toggle">

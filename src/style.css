@@ -22,6 +22,7 @@ body {
     z-index: -2;
     transform-origin: center center;
     animation: bgDrift 22s ease-in-out infinite alternate;
+    will-change: transform; /* own GPU layer: the drift never repaints */
 }
 
 #bg-image {
@@ -29,7 +30,7 @@ body {
     background-size: cover; background-position: center;
     filter: blur(var(--blur-amount)) brightness(0.35);
     transition: background-image 1s cubic-bezier(0.25, 1, 0.5, 1), filter 0.35s ease;
-    will-change: background-image, filter, transform; /* Pre-allocates background transition space */
+    will-change: filter, transform; /* own GPU layer: blur and pulse run in the compositor */
     transform-origin: center center;
 }
 
@@ -134,6 +135,7 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
 #audio-source-select { max-width: 150px; text-overflow: ellipsis; }
 
 .uptempo-status { font-size: 0.72rem; color: #ffb36b; line-height: 1.35; }
+.gpu-status { font-size: 0.72rem; color: #8a8a8a; line-height: 1.35; }
 
 .custom-file-upload {
     background: rgba(255, 255, 255, 0.06); border: 1px solid var(--glass-border);
@@ -365,6 +367,13 @@ body[data-lyric-theme="vivid"] .lyric-word--revealed {
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.5s ease;
+}
+
+/* Only hint the per-frame properties while uptempo is actually animating
+   them, so idle layers don't hold extra GPU memory. */
+body[data-uptempo="on"] #bg-stage,
+body[data-uptempo="on"] #cava-canvas {
+    will-change: transform, filter;
 }
 
 body[data-uptempo="on"] #cava-canvas {
