@@ -113,8 +113,7 @@ const noLyricsNoteToggle = document.getElementById('no-lyrics-note-toggle');
 const NO_LYRICS_NOTE_STORAGE_KEY = 'pear-lyrics-no-lyrics-note';
 
 // Show the music note instead of a text message while lyrics are being
-// searched for or when none exist, with the lyrics status written
-// underneath — also under the intro note of a track whose lyrics were found.
+// searched for or when none exist.
 let noLyricsNote = localStorage.getItem(NO_LYRICS_NOTE_STORAGE_KEY) === 'true';
 noLyricsNoteToggle.checked = noLyricsNote;
 noLyricsNoteToggle.addEventListener('change', () => {
@@ -123,17 +122,28 @@ noLyricsNoteToggle.addEventListener('change', () => {
     currentLineIndex = -1; // force re-render on next tick
 });
 
+// The note is re-requested on every player poll, so only rebuild it when
+// it isn't already up — otherwise its entrance animation would restart.
+function showNoLyricsNote() {
+    if (lyricsTarget.querySelector('.instrumental-icon[data-no-lyrics]')) return;
+    showInstrumentalIcon(-3);
+    lyricsTarget.firstElementChild.dataset.noLyrics = '';
+}
+
+// The line under the option in the panel saying whether the current
+// track's lyrics were found.
+const lyricsStatusEl = document.getElementById('lyrics-status');
 const LYRICS_STATUS_TEXT = {
+    waiting: 'Waiting for the player…',
     searching: 'Searching for lyrics…',
-    none: 'No lyrics found',
     found: 'Lyrics found',
+    none: 'No lyrics found for this track',
 };
 
-// The status note is re-requested on every player poll, so only rebuild it
-// when the status changes — otherwise its entrance animation would restart.
-function showLyricsStatusNote(status) {
-    if (lyricsTarget.querySelector(`.lyric-caption[data-status="${status}"]`)) return;
-    showInstrumentalIcon(-3, status);
+function setLyricsStatus(status) {
+    if (lyricsStatusEl.dataset.status === status) return;
+    lyricsStatusEl.dataset.status = status;
+    lyricsStatusEl.textContent = LYRICS_STATUS_TEXT[status];
 }
 
 const lyricModeSelect = document.getElementById('lyric-mode-select');
@@ -1177,6 +1187,7 @@ async function pollPearAPI() {
         processTrackState(state);
     } catch (err) {
         updateDebugPanel(null, err.message);
+        setLyricsStatus('waiting');
         lyricsTarget.innerHTML = `<div class="lyric-line animation-pulse" style="opacity: 0.4; font-size: 1.6rem;">Awaiting ${currentHost}:${currentPort}...</div>`;
     }
 }
@@ -1195,8 +1206,9 @@ function processTrackState(state) {
 
     if ((!cachedLyrics || cachedLyrics.length === 0) && !isFetchingFallback && !fallbackFailed && state.title) {
         fetchOnlineSyncedFallback(state);
+        setLyricsStatus('searching');
         if (noLyricsNote) {
-            showLyricsStatusNote('searching');
+            showNoLyricsNote();
         } else {
             lyricsTarget.innerHTML = `<div class="lyric-line animation-pulse" style="font-size: 2.2rem; opacity: 0.6;">Searching synced lyrics...</div>`;
         }
@@ -1206,14 +1218,16 @@ function processTrackState(state) {
     if (!cachedLyrics || cachedLyrics.length === 0) {
         if (isFetchingFallback) return;
         lastPlayerState = null;
+        setLyricsStatus('none');
         if (noLyricsNote) {
-            showLyricsStatusNote('none');
+            showNoLyricsNote();
         } else {
             lyricsTarget.innerHTML = `<div class="lyric-line" style="opacity: 0.4; font-size: 2.2rem;">No synced lines found for this track</div>`;
         }
         return;
     }
 
+    setLyricsStatus('found');
     syncPlaybackAnchor(state);
 }
 
@@ -1374,7 +1388,7 @@ function renderTimestamps(progressMs) {
             currentLineIndex = -2;
             clearWbwTimers();
             wbwLineIndex = -2;
-            showInstrumentalIcon(-2, noLyricsNote ? 'found' : null);
+            showInstrumentalIcon(-2);
         }
         return;
     }
@@ -1503,9 +1517,7 @@ function startWordByWord(textString, availableMs, lineIndex) {
     }
 }
 
-// `status` (optional) adds the lyrics status underneath — see
-// LYRICS_STATUS_TEXT.
-function showInstrumentalIcon(lineIndex, status = null) {
+function showInstrumentalIcon(lineIndex) {
     lyricsTarget.innerHTML = '';
 
     const lineWrapper = document.createElement('div');
@@ -1521,14 +1533,6 @@ function showInstrumentalIcon(lineIndex, status = null) {
 
     lineWrapper.appendChild(span);
     lyricsTarget.appendChild(lineWrapper);
-
-    if (status) {
-        const caption = document.createElement('div');
-        caption.className = 'lyric-caption';
-        caption.dataset.status = status;
-        caption.textContent = LYRICS_STATUS_TEXT[status];
-        lyricsTarget.appendChild(caption);
-    }
 }
 
 function showSingleWord(word, burstMs, lineMs, lineIndex, wordIndex) {

@@ -144,6 +144,9 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
 
 .uptempo-status { font-size: 0.72rem; color: #ffb36b; line-height: 1.35; }
 .gpu-status { font-size: 0.72rem; color: #8a8a8a; line-height: 1.35; }
+.lyrics-status { font-size: 0.72rem; color: #8a8a8a; line-height: 1.35; margin-top: -4px; }
+.lyrics-status[data-status="found"] { color: #7fd99a; }
+.lyrics-status[data-status="none"] { color: #ff8a8a; }
 
 .custom-file-upload {
     background: rgba(255, 255, 255, 0.06); border: 1px solid var(--glass-border);
@@ -273,27 +276,6 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
 
 .lyric-line--live.instrumental-icon {
     animation: lineGlow 1.3s ease-out forwards, iconBreathe 2.4s ease-in-out 1.3s infinite;
-}
-
-/* Lyrics status under the music note ("Note When No Lyrics" option). */
-.lyric-caption {
-    margin-top: 0.4rem;
-    font-size: 1rem;
-    font-weight: 600;
-    letter-spacing: 0.12em;
-    text-transform: uppercase;
-    color: var(--alb-m-1, #f7f1fb);
-    opacity: 0;
-    animation: captionIn 0.8s ease 0.3s forwards;
-}
-
-body[data-lyric-theme="vivid"] .lyric-caption {
-    color: var(--alb-v-1, #ffffff);
-}
-
-@keyframes captionIn {
-    from { opacity: 0; transform: translate3d(0, 6px, 0); }
-    to { opacity: 0.55; transform: translate3d(0, 0, 0); }
 }
 
 /* End Early — the line fades out before the next one starts. */
