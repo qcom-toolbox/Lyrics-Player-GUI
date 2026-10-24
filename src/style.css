@@ -117,8 +117,8 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
 #port-input { width: 80px; text-align: center; }
 #sync-offset-input,
 #max-line-input,
-#note-delay-input,
-#end-early-input { width: 58px; }
+#note-delay-input { width: 58px; }
+#end-early-input { width: 72px; }
 #host-input:focus,
 #port-input:focus,
 #sync-offset-input:focus,
