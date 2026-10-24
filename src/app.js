@@ -532,8 +532,14 @@ const UPTEMPO_STORAGE_KEY = 'pear-lyrics-uptempo';
 const AUDIO_SOURCE_STORAGE_KEY = 'pear-lyrics-audio-source';
 const SYSTEM_AUDIO_SOURCE = 'system';
 const DEFAULT_INPUT_SOURCE = 'default';
-// Loopback capture: Windows, and macOS 14.2+ via CoreAudio Tap (see main.js).
-const SUPPORTS_SYSTEM_AUDIO = /win|mac/i.test(navigator.platform);
+// Loopback capture: Windows, macOS 14.2+ via CoreAudio Tap, and Linux via
+// PulseAudio/PipeWire (see main.js).
+const IS_LINUX = /linux/i.test(navigator.platform);
+// Linux needs the app's PulseAudio/PipeWire helper (see main.js), so only
+// when running inside the Electron app.
+const SUPPORTS_SYSTEM_AUDIO = /win|mac/i.test(navigator.platform)
+    || (IS_LINUX && Boolean(window.pearLyrics?.enableLinuxSystemAudio));
+let linuxSystemAudioLabel = null;
 
 // Bars per side — the spectrum is mirrored with the bass in the middle so it
 // sits centered under the lyrics.
@@ -597,7 +603,8 @@ async function populateAudioSources() {
     try {
         const devices = await navigator.mediaDevices.enumerateDevices();
         inputs = devices.filter((d) => d.kind === 'audioinput' && d.deviceId
-            && d.deviceId !== 'default' && d.deviceId !== 'communications');
+            && d.deviceId !== 'default' && d.deviceId !== 'communications'
+            && d.label !== linuxSystemAudioLabel); // already offered as "System Audio"
     } catch {
         // No device list — the built-in options still work
     }
@@ -613,7 +620,31 @@ async function populateAudioSources() {
     audioSourceSelect.value = audioSource;
 }
 
+// Linux "System Audio": ask the main process for the virtual input it remaps
+// from the speakers, then open it like any other input. A freshly created
+// source can take a moment to show up in the device list.
+async function getLinuxSystemAudioStream() {
+    linuxSystemAudioLabel = await window.pearLyrics.enableLinuxSystemAudio();
+    const audio = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+    for (let attempt = 0; attempt < 10; attempt++) {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        if (!devices.some((d) => d.label)) {
+            // Labels stay hidden until the page has opened an input once.
+            const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
+            probe.getTracks().forEach((track) => track.stop());
+            continue;
+        }
+        const device = devices.find((d) => d.kind === 'audioinput' && d.label === linuxSystemAudioLabel);
+        if (device) {
+            return navigator.mediaDevices.getUserMedia({ audio: { ...audio, deviceId: { exact: device.deviceId } } });
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    throw new Error(`the ${linuxSystemAudioLabel} input did not appear`);
+}
+
 async function getAudioStream(source) {
+    if (source === SYSTEM_AUDIO_SOURCE && IS_LINUX) return getLinuxSystemAudioStream();
     if (source === SYSTEM_AUDIO_SOURCE) {
         const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
         stream.getVideoTracks().forEach((track) => track.stop());

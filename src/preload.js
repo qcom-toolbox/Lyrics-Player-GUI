@@ -4,4 +4,5 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('pearLyrics', {
   getRenderStatus: () => ipcRenderer.invoke('render:get-status'),
   setRenderSetting: (key, enabled, restartNow) => ipcRenderer.invoke('render:set', key, enabled, restartNow),
+  enableLinuxSystemAudio: () => ipcRenderer.invoke('audio:enable-linux-system-audio'),
 });

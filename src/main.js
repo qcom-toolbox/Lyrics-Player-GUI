@@ -1,4 +1,5 @@
 const { app, BrowserWindow, session, desktopCapturer, ipcMain } = require('electron');
+const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -70,6 +71,9 @@ function createWindow() {
     autoHideMenuBar: true,
     frame: true,
     backgroundColor: '#0b0b0f',
+    // Linux takes the window/taskbar icon from here; macOS and Windows use
+    // the app bundle's.
+    ...(process.platform === 'linux' ? { icon: path.join(__dirname, 'icon.png') } : {}),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -98,6 +102,61 @@ function handleDisplayMediaRequests() {
       .catch(() => callback(null));
   });
 }
+
+// Uptempo mode's "System Audio" on Linux. Chromium refuses to open
+// PulseAudio "monitor" sources (what the speakers are playing), so remap the
+// default output's monitor into an ordinary input it will open. Works on
+// PulseAudio and on PipeWire through pipewire-pulse; needs `pactl`.
+const LINUX_AUDIO_SOURCE_NAME = 'pearlyrics_system_audio';
+// No spaces: pipewire-pulse cuts quoted module arguments at the first space.
+const LINUX_AUDIO_SOURCE_LABEL = 'PearLyrics-System-Audio';
+let linuxAudioModule = null;
+let linuxAudioSink = null;
+
+function pactl(args) {
+  return new Promise((resolve, reject) => {
+    execFile('pactl', args, { env: { ...process.env, LC_ALL: 'C' } }, (err, stdout) => {
+      if (err) reject(err.code === 'ENOENT' ? new Error('pactl not found — install PulseAudio or PipeWire (pipewire-pulse)') : err);
+      else resolve(stdout.trim());
+    });
+  });
+}
+
+async function unloadLinuxSystemAudio() {
+  // Also clears a source left behind by a crashed earlier run.
+  const modules = await pactl(['list', 'short', 'modules']).catch(() => '');
+  const ids = modules.split('\n')
+    .filter((line) => line.includes(`source_name=${LINUX_AUDIO_SOURCE_NAME}`))
+    .map((line) => line.split('\t')[0]);
+  await Promise.all(ids.map((id) => pactl(['unload-module', id]).catch(() => {})));
+  linuxAudioModule = null;
+  linuxAudioSink = null;
+}
+
+async function enableLinuxSystemAudio() {
+  const info = await pactl(['info']);
+  const sink = info.match(/^Default Sink:\s*(.+)$/m)?.[1]?.trim();
+  if (!sink) throw new Error('no default audio output found');
+  // Follow the default output if it changed (e.g. headphones plugged in).
+  if (linuxAudioModule && linuxAudioSink === sink) return LINUX_AUDIO_SOURCE_LABEL;
+  await unloadLinuxSystemAudio();
+  linuxAudioModule = await pactl([
+    'load-module', 'module-remap-source',
+    `master=${sink}.monitor`,
+    `source_name=${LINUX_AUDIO_SOURCE_NAME}`,
+    `source_properties=device.description=${LINUX_AUDIO_SOURCE_LABEL}`,
+  ]);
+  linuxAudioSink = sink;
+  return LINUX_AUDIO_SOURCE_LABEL;
+}
+
+ipcMain.handle('audio:enable-linux-system-audio', () => enableLinuxSystemAudio());
+
+app.on('will-quit', (event) => {
+  if (process.platform !== 'linux' || !linuxAudioModule) return;
+  event.preventDefault();
+  unloadLinuxSystemAudio().finally(() => app.quit());
+});
 
 app.whenReady().then(() => {
   handleDisplayMediaRequests();

@@ -23,13 +23,10 @@ jobs:
           # inject the exe's version/icon resources, so build it natively
           # on Windows instead. macOS is a single universal (x64 + arm64)
           # binary, merged by electron-packager via @electron/universal.
+          # Linux is packaged separately below (build-linux).
           - name: windows-x64
             os: windows-latest
             platform: win32
-            arch: x64
-          - name: linux-x64
-            os: ubuntu-latest
-            platform: linux
             arch: x64
           - name: macos-universal
             os: macos-14
@@ -62,7 +59,7 @@ jobs:
         shell: pwsh
         run: Compress-Archive -Path "PearLyrics-${{ matrix.platform }}-${{ matrix.arch }}" -DestinationPath "../../PearLyrics-${{ matrix.name }}.zip"
 
-      - name: Zip artifact (macOS/Linux)
+      - name: Zip artifact (macOS)
         if: runner.os != 'Windows'
         working-directory: src/dist
         run: zip -r "../../PearLyrics-${{ matrix.name }}.zip" "PearLyrics-${{ matrix.platform }}-${{ matrix.arch }}"
@@ -73,9 +70,49 @@ jobs:
           name: PearLyrics-${{ matrix.name }}
           path: PearLyrics-${{ matrix.name }}.zip
 
+  # Linux gets real packages instead of a zip: .deb (Debian/Ubuntu), .rpm
+  # (Fedora/openSUSE), .pacman (Arch) and .tar.gz (Gentoo and everything
+  # else) for x64 and arm64, plus an x64 AppImage — the arm64 AppImage
+  # runtime needs an unversioned libz.so most systems lack. Targets and
+  # arches come from package.json; electron-builder cross-builds arm64 from
+  # the x64 runner, and rpm/pacman need their tools.
+  build-linux:
+    name: Package (linux x64 + arm64)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install packaging tools
+        run: sudo apt-get update && sudo apt-get install -y rpm libarchive-tools
+
+      - name: Install dependencies
+        working-directory: src
+        run: npm install
+
+      - name: Package
+        working-directory: src
+        run: npx electron-builder --linux --publish never
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: PearLyrics-linux
+          path: |
+            src/dist-linux/*.AppImage
+            src/dist-linux/*.deb
+            src/dist-linux/*.rpm
+            src/dist-linux/*.pacman
+            src/dist-linux/*.tar.gz
+
   release:
     name: Publish release
-    needs: build
+    needs: [build, build-linux]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -103,5 +140,11 @@ jobs:
           target_commitish: ${{ github.sha }}
           name: PearLyrics ${{ steps.tag.outputs.name }}
           generate_release_notes: true
-          files: artifacts/**/*.zip
+          files: |
+            artifacts/**/*.zip
+            artifacts/**/*.AppImage
+            artifacts/**/*.deb
+            artifacts/**/*.rpm
+            artifacts/**/*.pacman
+            artifacts/**/*.tar.gz
           fail_on_unmatched_files: true
