@@ -35,6 +35,9 @@ jobs:
             os: macos-14
             platform: darwin
             arch: universal
+            # Uptempo mode's system-audio capture uses Apple's CoreAudio Tap,
+            # which needs NSAudioCaptureUsageDescription in the app's Info.plist.
+            extra_args: --extend-info=macos-info.plist --ignore=macos-info.plist
 
     steps:
       - name: Checkout
@@ -51,7 +54,7 @@ jobs:
 
       - name: Package (${{ matrix.platform }}/${{ matrix.arch }})
         working-directory: src
-        run: npx electron-packager . PearLyrics --platform=${{ matrix.platform }} --arch=${{ matrix.arch }} --out=dist --overwrite
+        run: npx electron-packager . PearLyrics --platform=${{ matrix.platform }} --arch=${{ matrix.arch }} --out=dist --overwrite ${{ matrix.extra_args }}
 
       - name: Zip artifact (Windows)
         if: runner.os == 'Windows'

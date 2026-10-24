@@ -8,10 +8,10 @@
     "package": "electron-packager . PearLyrics --platform=win32 --arch=x64 --out=dist --overwrite",
     "package:win": "electron-packager . PearLyrics --platform=win32 --arch=x64 --out=dist --overwrite",
     "package:linux": "electron-packager . PearLyrics --platform=linux --arch=x64 --out=dist --overwrite",
-    "package:mac": "electron-packager . PearLyrics --platform=darwin --arch=universal --out=dist --overwrite"
+    "package:mac": "electron-packager . PearLyrics --platform=darwin --arch=universal --out=dist --overwrite --extend-info=macos-info.plist --ignore=macos-info.plist"
   },
   "devDependencies": {
-    "electron": "^30.0.0",
+    "electron": "^44.9.3",
     "electron-packager": "^17.1.2"
   }
 }

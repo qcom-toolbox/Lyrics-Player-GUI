@@ -12,6 +12,7 @@
     <div id="bg-stage">
         <div id="bg-image"></div>
     </div>
+    <canvas id="cava-canvas"></canvas>
 
     <div class="controls-panel">
         <div class="control-group">
@@ -45,6 +46,16 @@
                 <option value="vivid">Vivid</option>
             </select>
         </div>
+        <hr class="panel-divider">
+        <div class="control-group">
+            <label for="uptempo-toggle" title="Audio visualizer under the lyrics; background, lyrics and bars bounce on kicks and snares">Uptempo Mode</label>
+            <input type="checkbox" id="uptempo-toggle">
+        </div>
+        <div class="control-group hidden" id="audio-source-group">
+            <label for="audio-source-select" title="System Audio needs Windows or macOS 14.2+. Otherwise route audio through a loopback device like BlackHole, or use the mic.">Audio Source:</label>
+            <select id="audio-source-select"></select>
+        </div>
+        <div id="uptempo-status" class="uptempo-status hidden"></div>
         <hr class="panel-divider">
         <div class="control-group">
             <label class="custom-file-upload">

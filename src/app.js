@@ -367,6 +367,8 @@ function setAlbumPalette(h, s) {
     root.setProperty('--alb-v-3', rgbToHex(v3));
     root.setProperty('--alb-v-4', rgbToHex(v4));
     root.setProperty('--alb-v-glow', v2.join(', '));
+
+    cavaColors = { melancholic: [m4, m3], vivid: [v2, v3] };
 }
 
 function extractAndApplyAlbumColor(url) {
@@ -390,6 +392,316 @@ function pulseBackground() {
         void el.offsetWidth;
         el.classList.add('bg-pulse');
     });
+}
+
+// --- Uptempo mode ----------------------------------------------------------
+// Captures live audio (system loopback on Windows, any input device
+// elsewhere), draws a cava-style spectrum between the background and the
+// lyrics, and detects kicks/snares to drive the --kick / --snare / --bass CSS
+// envelopes that make the background, bars and lyrics bounce.
+const uptempoToggle = document.getElementById('uptempo-toggle');
+const audioSourceGroup = document.getElementById('audio-source-group');
+const audioSourceSelect = document.getElementById('audio-source-select');
+const uptempoStatus = document.getElementById('uptempo-status');
+const cavaCanvas = document.getElementById('cava-canvas');
+const cavaCtx = cavaCanvas.getContext('2d');
+const UPTEMPO_STORAGE_KEY = 'pear-lyrics-uptempo';
+const AUDIO_SOURCE_STORAGE_KEY = 'pear-lyrics-audio-source';
+const SYSTEM_AUDIO_SOURCE = 'system';
+const DEFAULT_INPUT_SOURCE = 'default';
+// Loopback capture: Windows, and macOS 14.2+ via CoreAudio Tap (see main.js).
+const SUPPORTS_SYSTEM_AUDIO = /win|mac/i.test(navigator.platform);
+
+// Bars per side — the spectrum is mirrored with the bass in the middle so it
+// sits centered under the lyrics.
+const CAVA_BARS_PER_SIDE = 40;
+const CAVA_MIN_HZ = 40;
+const CAVA_MAX_HZ = 14000;
+const CAVA_FALL_PER_SEC = 1.4;
+
+// Onset detection: a hit is a jump in band energy well above the recent
+// spread of jumps (mean + k·stddev), with a cooldown so one kick isn't
+// counted twice.
+const ONSET_HISTORY_FRAMES = 45;
+const ONSET_SENSITIVITY = 1.6;
+const ONSET_MIN_FLUX = 0.03;
+const KICK_COOLDOWN_MS = 150;
+const SNARE_COOLDOWN_MS = 120;
+const KICK_DECAY_SEC = 0.15;
+const SNARE_DECAY_SEC = 0.11;
+
+let cavaColors = {
+    melancholic: [[206, 185, 227], [77, 59, 110]],
+    vivid: [[159, 196, 255], [255, 217, 244]],
+};
+let uptempo = localStorage.getItem(UPTEMPO_STORAGE_KEY) === 'true';
+let audioSource = localStorage.getItem(AUDIO_SOURCE_STORAGE_KEY)
+    || (SUPPORTS_SYSTEM_AUDIO ? SYSTEM_AUDIO_SOURCE : DEFAULT_INPUT_SOURCE);
+let audioCtx = null;
+let audioStream = null;
+let cavaAnalyser = null;
+let beatAnalyser = null;
+let cavaBins = null;
+let beatBins = null;
+let audioStartToken = 0;
+const cavaLevels = new Float32Array(CAVA_BARS_PER_SIDE);
+const beat = createBeatState();
+
+function createBeatState() {
+    return {
+        prevBass: 0, prevMid: 0,
+        kickFlux: [], snareFlux: [],
+        lastKick: 0, lastSnare: 0,
+        kick: 0, snare: 0, bass: 0,
+        shakeDir: 1, lastFrame: 0,
+    };
+}
+
+function setUptempoStatus(message) {
+    uptempoStatus.textContent = message;
+    uptempoStatus.classList.toggle('hidden', !message);
+}
+
+function addAudioSourceOption(value, label) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = label;
+    audioSourceSelect.appendChild(option);
+}
+
+async function populateAudioSources() {
+    let inputs = [];
+    try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        inputs = devices.filter((d) => d.kind === 'audioinput' && d.deviceId
+            && d.deviceId !== 'default' && d.deviceId !== 'communications');
+    } catch {
+        // No device list — the built-in options still work
+    }
+    audioSourceSelect.innerHTML = '';
+    if (SUPPORTS_SYSTEM_AUDIO) addAudioSourceOption(SYSTEM_AUDIO_SOURCE, 'System Audio');
+    addAudioSourceOption(DEFAULT_INPUT_SOURCE, 'Default Input');
+    inputs.forEach((d, i) => addAudioSourceOption(d.deviceId, d.label || `Input ${i + 1}`));
+    // Device labels/ids only show up once mic access is granted, so keep a
+    // saved device selected even before it's listed.
+    if (![...audioSourceSelect.options].some((o) => o.value === audioSource)) {
+        addAudioSourceOption(audioSource, 'Saved Input');
+    }
+    audioSourceSelect.value = audioSource;
+}
+
+async function getAudioStream(source) {
+    if (source === SYSTEM_AUDIO_SOURCE) {
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+        stream.getVideoTracks().forEach((track) => track.stop());
+        const [track] = stream.getAudioTracks();
+        if (!track) throw new Error('system audio is not supported on this OS');
+        // On macOS a denied "System Audio Recording" permission doesn't
+        // error — it hands back a track that's already ended.
+        if (track.readyState === 'ended') {
+            throw new Error('allow PearLyrics under System Settings → Privacy & Security → Screen & System Audio Recording');
+        }
+        return stream;
+    }
+    const audio = { echoCancellation: false, noiseSuppression: false, autoGainControl: false };
+    if (source !== DEFAULT_INPUT_SOURCE) audio.deviceId = { exact: source };
+    return navigator.mediaDevices.getUserMedia({ audio });
+}
+
+async function startAudio() {
+    stopAudio();
+    const token = audioStartToken;
+    setUptempoStatus('Connecting audio…');
+    try {
+        const stream = await getAudioStream(audioSource);
+        if (token !== audioStartToken) {
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+        }
+        audioStream = stream;
+        audioCtx = new AudioContext();
+        const sourceNode = audioCtx.createMediaStreamSource(stream);
+
+        // Smoothed, high-resolution analyser for the bars…
+        cavaAnalyser = audioCtx.createAnalyser();
+        cavaAnalyser.fftSize = 4096;
+        cavaAnalyser.smoothingTimeConstant = 0.55;
+        cavaAnalyser.minDecibels = -85;
+        cavaAnalyser.maxDecibels = -20;
+        // …and an unsmoothed one for beat detection, where smoothing would
+        // blunt the transients we're looking for.
+        beatAnalyser = audioCtx.createAnalyser();
+        beatAnalyser.fftSize = 1024;
+        beatAnalyser.smoothingTimeConstant = 0;
+        beatAnalyser.minDecibels = -90;
+        beatAnalyser.maxDecibels = -15;
+
+        sourceNode.connect(cavaAnalyser);
+        sourceNode.connect(beatAnalyser);
+        cavaBins = new Uint8Array(cavaAnalyser.frequencyBinCount);
+        beatBins = new Uint8Array(beatAnalyser.frequencyBinCount);
+
+        stream.getAudioTracks()[0].addEventListener('ended', () => {
+            if (token === audioStartToken) setUptempoStatus('Audio source disconnected');
+        });
+        setUptempoStatus('');
+        populateAudioSources();
+    } catch (err) {
+        if (token !== audioStartToken) return;
+        setUptempoStatus(`Audio unavailable: ${err.message || err.name}`);
+    }
+}
+
+function stopAudio() {
+    audioStartToken++;
+    if (audioStream) audioStream.getTracks().forEach((track) => track.stop());
+    if (audioCtx) audioCtx.close().catch(() => {});
+    audioStream = null;
+    audioCtx = null;
+    cavaAnalyser = null;
+    beatAnalyser = null;
+    cavaLevels.fill(0);
+    Object.assign(beat, createBeatState());
+}
+
+function applyUptempo() {
+    document.body.dataset.uptempo = uptempo ? 'on' : 'off';
+    audioSourceGroup.classList.toggle('hidden', !uptempo);
+    if (uptempo) {
+        populateAudioSources();
+        startAudio();
+    } else {
+        stopAudio();
+        setUptempoStatus('');
+        cavaCtx.clearRect(0, 0, cavaCanvas.width, cavaCanvas.height);
+    }
+}
+
+uptempoToggle.checked = uptempo;
+uptempoToggle.addEventListener('change', () => {
+    uptempo = uptempoToggle.checked;
+    localStorage.setItem(UPTEMPO_STORAGE_KEY, String(uptempo));
+    applyUptempo();
+});
+
+audioSourceSelect.addEventListener('change', () => {
+    audioSource = audioSourceSelect.value;
+    localStorage.setItem(AUDIO_SOURCE_STORAGE_KEY, audioSource);
+    if (uptempo) startAudio();
+});
+
+function bandLevel(bins, loHz, hiHz, binHz) {
+    const lo = Math.max(1, Math.floor(loHz / binHz));
+    const hi = Math.min(bins.length, Math.max(lo + 1, Math.ceil(hiHz / binHz)));
+    let sum = 0;
+    for (let i = lo; i < hi; i++) sum += bins[i];
+    return sum / (hi - lo) / 255;
+}
+
+function detectOnset(history, flux, level, sinceLastMs, minLevel, cooldownMs) {
+    flux = Math.max(0, flux);
+    history.push(flux);
+    if (history.length > ONSET_HISTORY_FRAMES) history.shift();
+    const mean = history.reduce((a, b) => a + b, 0) / history.length;
+    const variance = history.reduce((a, b) => a + (b - mean) ** 2, 0) / history.length;
+    return flux > mean + ONSET_SENSITIVITY * Math.sqrt(variance)
+        && flux > ONSET_MIN_FLUX
+        && level > minLevel
+        && sinceLastMs > cooldownMs;
+}
+
+function detectBeats(now) {
+    beatAnalyser.getByteFrequencyData(beatBins);
+    const binHz = audioCtx.sampleRate / beatAnalyser.fftSize;
+    const bass = bandLevel(beatBins, 40, 150, binHz);
+    const mid = bandLevel(beatBins, 1500, 5000, binHz);
+
+    if (detectOnset(beat.kickFlux, bass - beat.prevBass, bass, now - beat.lastKick, 0.2, KICK_COOLDOWN_MS)) {
+        beat.lastKick = now;
+        beat.kick = 1;
+    }
+    if (detectOnset(beat.snareFlux, mid - beat.prevMid, mid, now - beat.lastSnare, 0.15, SNARE_COOLDOWN_MS)) {
+        beat.lastSnare = now;
+        beat.snare = 1;
+        beat.shakeDir = -beat.shakeDir;
+    }
+    beat.prevBass = bass;
+    beat.prevMid = mid;
+    // Continuous bass swell, floored so a steady low end doesn't leave the
+    // background permanently zoomed.
+    const swell = Math.max(0, (bass - 0.35) / 0.65);
+    beat.bass += (swell - beat.bass) * 0.2;
+}
+
+function drawCava(dt) {
+    const dpr = window.devicePixelRatio || 1;
+    const w = cavaCanvas.clientWidth;
+    const h = cavaCanvas.clientHeight;
+    if (cavaCanvas.width !== Math.round(w * dpr) || cavaCanvas.height !== Math.round(h * dpr)) {
+        cavaCanvas.width = Math.round(w * dpr);
+        cavaCanvas.height = Math.round(h * dpr);
+    }
+    cavaCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cavaCtx.clearRect(0, 0, w, h);
+
+    if (cavaAnalyser) cavaAnalyser.getByteFrequencyData(cavaBins);
+    const binHz = audioCtx ? audioCtx.sampleRate / cavaAnalyser.fftSize : 1;
+    const ratio = CAVA_MAX_HZ / CAVA_MIN_HZ;
+
+    for (let i = 0; i < CAVA_BARS_PER_SIDE; i++) {
+        let target = 0;
+        if (cavaAnalyser) {
+            const loHz = CAVA_MIN_HZ * ratio ** (i / CAVA_BARS_PER_SIDE);
+            const hiHz = CAVA_MIN_HZ * ratio ** ((i + 1) / CAVA_BARS_PER_SIDE);
+            const lo = Math.floor(loHz / binHz);
+            const hi = Math.min(cavaBins.length, Math.max(lo + 1, Math.ceil(hiHz / binHz)));
+            let peak = 0;
+            for (let b = lo; b < hi; b++) peak = Math.max(peak, cavaBins[b]);
+            // Lift the floor and tilt toward the highs, which naturally carry
+            // much less energy than the bass.
+            const tilt = 1 + (i / CAVA_BARS_PER_SIDE) * 0.4;
+            target = Math.min(1, Math.max(0, (peak / 255 - 0.12) / 0.88) * tilt);
+        }
+        const level = cavaLevels[i];
+        cavaLevels[i] = target > level ? target : Math.max(target, level - CAVA_FALL_PER_SEC * dt);
+    }
+
+    const [top, bottom] = cavaColors[lyricTheme] || cavaColors.melancholic;
+    const alpha = 0.5 + beat.kick * 0.35;
+    const gradient = cavaCtx.createLinearGradient(0, h, 0, 0);
+    gradient.addColorStop(0, `rgba(${bottom.join(', ')}, ${alpha * 0.25})`);
+    gradient.addColorStop(1, `rgba(${top.join(', ')}, ${alpha})`);
+    cavaCtx.fillStyle = gradient;
+
+    const total = CAVA_BARS_PER_SIDE * 2;
+    const gap = Math.max(2, w / total * 0.28);
+    const barW = (w - gap * (total - 1)) / total;
+    const radius = Math.min(barW / 2, 6);
+    const mid = w / 2;
+    cavaCtx.beginPath();
+    for (let i = 0; i < CAVA_BARS_PER_SIDE; i++) {
+        const barH = Math.max(2, cavaLevels[i] ** 1.3 * h * 0.92);
+        const offset = gap / 2 + i * (barW + gap);
+        cavaCtx.roundRect(mid + offset, h - barH, barW, barH, [radius, radius, 0, 0]);
+        cavaCtx.roundRect(mid - offset - barW, h - barH, barW, barH, [radius, radius, 0, 0]);
+    }
+    cavaCtx.fill();
+}
+
+function updateUptempo(now) {
+    if (!uptempo) return;
+    const dt = Math.min(0.1, (now - (beat.lastFrame || now)) / 1000);
+    beat.lastFrame = now;
+    beat.kick *= Math.exp(-dt / KICK_DECAY_SEC);
+    beat.snare *= Math.exp(-dt / SNARE_DECAY_SEC);
+    if (beatAnalyser) detectBeats(now);
+
+    const root = document.documentElement.style;
+    root.setProperty('--kick', beat.kick.toFixed(3));
+    root.setProperty('--snare', beat.snare.toFixed(3));
+    root.setProperty('--bass', beat.bass.toFixed(3));
+    root.setProperty('--shake-dir', String(beat.shakeDir));
+    drawCava(dt);
 }
 
 function blobToDataUrl(blob) {
@@ -1041,6 +1353,7 @@ function renderLoop() {
     if (cachedLyrics?.length && lastPlayerState) {
         renderTimestamps(getInterpolatedPlaybackMs());
     }
+    updateUptempo(performance.now());
     requestAnimationFrame(renderLoop);
 }
 
@@ -1051,6 +1364,7 @@ function schedulePearPolling() {
     pollPearAPI();
 }
 
+applyUptempo();
 renderLoop();
 connectPearWebSocket();
 schedulePearPolling();

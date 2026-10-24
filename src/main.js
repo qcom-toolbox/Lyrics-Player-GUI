@@ -1,4 +1,4 @@
-const { app, BrowserWindow } = require('electron');
+const { app, BrowserWindow, session, desktopCapturer } = require('electron');
 const path = require('path');
 
 function createWindow() {
@@ -19,7 +19,27 @@ function createWindow() {
   win.loadFile(path.join(__dirname, 'index.html'));
 }
 
+// Uptempo mode's "System Audio" source goes through getDisplayMedia. Hand it
+// loopback audio (what's playing on the machine) without showing a picker.
+// The video half is just this window's own page — the renderer drops it right
+// away, and capturing our own frame instead of the screen avoids the macOS
+// Screen Recording prompt. Loopback works on Windows, and on macOS 14.2+
+// through Apple's CoreAudio Tap (Electron 39+, needs the
+// NSAudioCaptureUsageDescription key from macos-info.plist).
+function handleDisplayMediaRequests() {
+  session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
+    if (request.frame) {
+      callback({ video: request.frame, audio: 'loopback' });
+      return;
+    }
+    desktopCapturer.getSources({ types: ['screen'] })
+      .then((sources) => callback({ video: sources[0], audio: 'loopback' }))
+      .catch(() => callback(null));
+  });
+}
+
 app.whenReady().then(() => {
+  handleDisplayMediaRequests();
   createWindow();
 
   app.on('activate', () => {

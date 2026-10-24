@@ -2,6 +2,11 @@
     --blur-amount: 24px;
     --glass-bg: rgba(10, 10, 15, 0.7);
     --glass-border: rgba(255, 255, 255, 0.1);
+    /* Uptempo mode envelopes (0..1), driven every frame from app.js */
+    --kick: 0;
+    --snare: 0;
+    --bass: 0;
+    --shake-dir: 1;
 }
 
 body {
@@ -109,7 +114,8 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
 #port-input:focus,
 #sync-offset-input:focus { border-color: rgba(255,255,255,0.3); }
 
-#lyric-mode-select {
+#lyric-mode-select,
+#audio-source-select {
     background: rgba(0, 0, 0, 0.5);
     border: 1px solid var(--glass-border);
     color: #fff;
@@ -120,7 +126,11 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
     cursor: pointer;
     font-size: 0.8rem;
 }
-#lyric-mode-select:focus { border-color: rgba(255,255,255,0.3); }
+#lyric-mode-select:focus,
+#audio-source-select:focus { border-color: rgba(255,255,255,0.3); }
+#audio-source-select { max-width: 150px; text-overflow: ellipsis; }
+
+.uptempo-status { font-size: 0.72rem; color: #ffb36b; line-height: 1.35; }
 
 .custom-file-upload {
     background: rgba(255, 255, 255, 0.06); border: 1px solid var(--glass-border);
@@ -141,6 +151,8 @@ body[data-lyric-theme="vivid"] #bg-overlay.bg-pulse {
 .hidden { display: none !important; }
 
 .lyrics-container {
+    position: relative;
+    z-index: 1;
     width: 88%;
     max-width: 980px;
     text-align: center;
@@ -333,4 +345,44 @@ body[data-lyric-theme="vivid"] .lyric-word--revealed {
     background-clip: text;
     color: transparent;
     -webkit-text-fill-color: transparent;
+}
+
+/* ============================================================
+   Uptempo mode — a cava-style spectrum sits on top of the
+   background, under the lyrics. Background, bars and lyrics
+   all bounce off the --kick / --snare envelopes set from the
+   live audio analysis. Uses the individual `scale`/`translate`/
+   `rotate` properties so it composes with the existing drift
+   and pulse animations instead of fighting over `transform`.
+   ============================================================ */
+#cava-canvas {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    width: 100%; height: 45vh;
+    z-index: 0;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.5s ease;
+}
+
+body[data-uptempo="on"] #cava-canvas {
+    opacity: 1;
+    filter: brightness(calc(1 + var(--kick) * 0.5));
+}
+
+body[data-uptempo="on"] #bg-stage {
+    filter: brightness(calc(1 + var(--kick) * 0.75)) saturate(calc(1 + var(--kick) * 0.5));
+}
+
+body[data-uptempo="on"] #bg-image {
+    scale: calc(1 + var(--kick) * 0.07 + var(--bass) * 0.03);
+}
+
+body[data-uptempo="on"] #bg-overlay {
+    opacity: calc(1 - var(--kick) * 0.3);
+}
+
+body[data-uptempo="on"] .lyrics-container {
+    scale: calc(1 + var(--kick) * 0.09);
+    translate: calc(var(--snare) * var(--shake-dir) * 7px) calc(var(--kick) * -10px);
+    rotate: calc(var(--snare) * var(--shake-dir) * 1.4deg);
 }
