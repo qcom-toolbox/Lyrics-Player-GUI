@@ -42,6 +42,19 @@ maxLineInput.addEventListener('input', () => {
     currentLineIndex = -1; // force re-render on next tick
 });
 
+const holdLineToggle = document.getElementById('hold-line-toggle');
+const HOLD_LINE_STORAGE_KEY = 'pear-lyrics-hold-line';
+
+// Keep a line's text up until the next line, instead of swapping it for the
+// music-note icon when its max time (or a long instrumental gap) runs out.
+let holdLine = localStorage.getItem(HOLD_LINE_STORAGE_KEY) === 'true';
+holdLineToggle.checked = holdLine;
+holdLineToggle.addEventListener('change', () => {
+    holdLine = holdLineToggle.checked;
+    localStorage.setItem(HOLD_LINE_STORAGE_KEY, String(holdLine));
+    currentLineIndex = -1; // force re-render on next tick
+});
+
 const lyricModeSelect = document.getElementById('lyric-mode-select');
 const LYRIC_MODE_STORAGE_KEY = 'pear-lyrics-mode';
 
@@ -1335,14 +1348,15 @@ function startWordByWord(textString, availableMs, lineIndex) {
     // If this line's words finish well before the next line actually starts
     // (a long instrumental break mid-song), swap to the music-note icon for
     // the remaining gap instead of leaving the last word frozen on screen.
-    // A max line time does the same once it runs out.
+    // A max line time does the same once it runs out — unless the user
+    // chose to hold the text until the next line.
     const wordsEndMs = words.length * slotMs;
     const leftoverMs = availableMs - wordsEndMs;
     let iconDelay = leftoverMs > INSTRUMENTAL_GAP_MS ? wordsEndMs + INSTRUMENTAL_ICON_DELAY_MS : Infinity;
     if (maxLineMs > 0 && availableMs > maxLineMs) {
         iconDelay = Math.min(iconDelay, Math.max(wordsEndMs, maxLineMs));
     }
-    if (iconDelay < availableMs) {
+    if (iconDelay < availableMs && !holdLine) {
         const t = setTimeout(() => {
             if (wbwLineIndex !== lineIndex) return;
             showInstrumentalIcon(lineIndex);
