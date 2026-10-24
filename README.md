@@ -20,8 +20,8 @@ Built with **Electron** — a frameless-friendly window with a blurred album-art
 
 | Main view | Controls |
 | --- | --- |
-| ![Lyrics overlay — replace with docs/screenshots/main.png](docs/screenshots/main.png) | ![Settings panel — replace with docs/screenshots/controls.png](docs/screenshots/controls.png) |
-| Synced lyrics over blurred cover art | API host, port, sync lead, background, debug |
+| <img src="docs/screenshots/main.png" alt="Lyrics overlay with the Uptempo Mode visualizer" width="640"> | <img src="docs/screenshots/controls.png" alt="Settings panel" width="240"> |
+| Synced lyrics over blurred cover art, with the Uptempo Mode visualizer | Connection, lyric timing, display, Uptempo Mode, GPU/VSync, debug |
 
 ## Features
 
