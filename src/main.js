@@ -1,5 +1,5 @@
 const { app, BrowserWindow, session, desktopCapturer, ipcMain } = require('electron');
-const { execFile } = require('child_process');
+const { execFile, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -47,11 +47,20 @@ if (!vsync) {
 
 const RENDER_SETTINGS = ['gpuAcceleration', 'vsync'];
 
-ipcMain.handle('render:get-status', () => ({
-  gpuAcceleration,
-  vsync,
-  features: app.getGPUFeatureStatus(),
-}));
+// getGPUFeatureStatus() reports software rendering until the GPU process has
+// started and sent its info, so wait for that (with a timeout, in case the
+// GPU process never comes up) instead of showing a false "GPU unavailable".
+const gpuInfoReady = gpuAcceleration
+  ? new Promise((resolve) => {
+    app.once('gpu-info-update', resolve);
+    setTimeout(resolve, 5000);
+  })
+  : Promise.resolve();
+
+ipcMain.handle('render:get-status', async () => {
+  await gpuInfoReady;
+  return { gpuAcceleration, vsync, features: app.getGPUFeatureStatus() };
+});
 
 ipcMain.handle('render:set', (event, key, enabled, restartNow) => {
   if (!RENDER_SETTINGS.includes(key)) return;
@@ -106,17 +115,19 @@ function handleDisplayMediaRequests() {
 // Uptempo mode's "System Audio" on Linux. Chromium refuses to open
 // PulseAudio "monitor" sources (what the speakers are playing), so remap the
 // default output's monitor into an ordinary input it will open. Works on
-// PulseAudio and on PipeWire through pipewire-pulse; needs `pactl`.
+// PulseAudio and on PipeWire through pipewire-pulse with `pactl`; on PipeWire
+// systems without `pactl`, falls back to PipeWire's own `pw-loopback`.
 const LINUX_AUDIO_SOURCE_NAME = 'pearlyrics_system_audio';
 // No spaces: pipewire-pulse cuts quoted module arguments at the first space.
 const LINUX_AUDIO_SOURCE_LABEL = 'PearLyrics-System-Audio';
 let linuxAudioModule = null;
 let linuxAudioSink = null;
+let linuxAudioLoopback = null; // pw-loopback process, when pactl is missing
 
 function pactl(args) {
   return new Promise((resolve, reject) => {
     execFile('pactl', args, { env: { ...process.env, LC_ALL: 'C' } }, (err, stdout) => {
-      if (err) reject(err.code === 'ENOENT' ? new Error('pactl not found — install PulseAudio or PipeWire (pipewire-pulse)') : err);
+      if (err) reject(err);
       else resolve(stdout.trim());
     });
   });
@@ -150,9 +161,39 @@ async function enableLinuxSystemAudio() {
   return LINUX_AUDIO_SOURCE_LABEL;
 }
 
-ipcMain.handle('audio:enable-linux-system-audio', () => enableLinuxSystemAudio());
+// PipeWire without pactl: pw-loopback captures the default output (and
+// follows it when it changes) and plays it into a virtual input. It runs
+// for as long as the source should exist, so it's killed on quit.
+function enableLinuxSystemAudioPipeWire() {
+  if (linuxAudioLoopback) return Promise.resolve(LINUX_AUDIO_SOURCE_LABEL);
+  return new Promise((resolve, reject) => {
+    const child = spawn('pw-loopback', [
+      '--name', 'pearlyrics',
+      '--capture-props', 'stream.capture.sink=true',
+      // Audio/Source, not Audio/Source/Virtual: Chromium lists a virtual
+      // source but hangs opening it.
+      '--playback-props', `media.class=Audio/Source node.name=${LINUX_AUDIO_SOURCE_NAME} node.description=${LINUX_AUDIO_SOURCE_LABEL}`,
+    ], { stdio: 'ignore' });
+    child.once('error', (err) => {
+      reject(err.code === 'ENOENT' ? new Error('pactl or pw-loopback not found — install PulseAudio or PipeWire') : err);
+    });
+    child.once('spawn', () => {
+      linuxAudioLoopback = child;
+      resolve(LINUX_AUDIO_SOURCE_LABEL);
+    });
+    child.once('exit', () => {
+      if (linuxAudioLoopback === child) linuxAudioLoopback = null;
+    });
+  });
+}
+
+ipcMain.handle('audio:enable-linux-system-audio', () => enableLinuxSystemAudio().catch((err) => {
+  if (err.code !== 'ENOENT') throw err;
+  return enableLinuxSystemAudioPipeWire();
+}));
 
 app.on('will-quit', (event) => {
+  linuxAudioLoopback?.kill();
   if (process.platform !== 'linux' || !linuxAudioModule) return;
   event.preventDefault();
   unloadLinuxSystemAudio().finally(() => app.quit());

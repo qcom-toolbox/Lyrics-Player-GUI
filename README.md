@@ -86,7 +86,7 @@ The app runs natively on Wayland and on X11.
 
 ### System audio on Linux
 
-Uptempo Mode's **System Audio** source needs PulseAudio or PipeWire (with `pipewire-pulse`, the default on current Ubuntu, Fedora and Arch desktops) and the `pactl` command (package `pulseaudio-utils` on Debian/Ubuntu, `pulseaudio-utils` or `pipewire-pulseaudio` on Fedora, `libpulse` on Arch). Chromium refuses to record from the speakers' "monitor" directly, so while Uptempo Mode runs the app adds a virtual input called **PearLyrics-System-Audio** that mirrors your current output, and removes it when you quit.
+Uptempo Mode's **System Audio** source needs PulseAudio or PipeWire (with `pipewire-pulse`, the default on current Ubuntu, Fedora and Arch desktops). It uses the `pactl` command when installed (package `pulseaudio-utils` on Debian/Ubuntu, `pulseaudio-utils` or `pipewire-pulseaudio` on Fedora, `libpulse` on Arch), and otherwise falls back to PipeWire's own `pw-loopback`. Chromium refuses to record from the speakers' "monitor" directly, so while Uptempo Mode runs the app adds a virtual input called **PearLyrics-System-Audio** that mirrors your current output, and removes it when you quit.
 
 ## Build from source
 
