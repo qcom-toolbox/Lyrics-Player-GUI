@@ -1262,6 +1262,61 @@ function processTrackState(state) {
     syncPlaybackAnchor(state);
 }
 
+// Retry after a network error instead of giving up on the track for good.
+const LYRICS_RETRY_MS = 10000;
+let lyricsFetchToken = 0;
+
+async function lrclibFetch(path, params) {
+    const url = new URL(`https://lrclib.net/api/${path}`);
+    Object.entries(params).forEach(([key, value]) => { if (value) url.searchParams.set(key, value); });
+    const res = await fetch(url, { headers: LRCLIB_HEADERS });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`LRCLIB HTTP ${res.status}`);
+    return res.json();
+}
+
+// Synced result closest in length to the playing track. With `strict`, only
+// within 5 s, so a same-titled song by someone else isn't picked.
+function pickSyncedMatch(results, durationSec, strict) {
+    const withSync = (results || []).filter((track) => track.syncedLyrics);
+    if (!durationSec) return withSync[0] || null;
+    const distance = (track) => (track.duration ? Math.abs(track.duration - durationSec) : Infinity);
+    const best = withSync.sort((a, b) => distance(a) - distance(b))[0] || null;
+    return !strict || (best && distance(best) <= 5) ? best : null;
+}
+
+async function findSyncedLyrics(state) {
+    const title = normalizeTrackTitle(state.title);
+    const artist = normalizeArtistName(state.artist);
+    const firstArtist = artist.split(', ')[0];
+    const album = state.album || state.albumName || '';
+    const durationSec = getTrackDurationSec(state);
+
+    if (durationSec) {
+        const track = await lrclibFetch('get', {
+            track_name: title, artist_name: artist, album_name: album, duration: String(durationSec),
+        });
+        if (track?.syncedLyrics) return track.syncedLyrics;
+    }
+
+    // YouTube's artist string often doesn't match LRCLIB's ("A y B" vs
+    // "A, B", or the second artist missing), so widen the search step by step.
+    const searches = [
+        { track_name: title, artist_name: artist },
+        firstArtist !== artist && { track_name: title, artist_name: firstArtist },
+        { q: `${title} ${firstArtist}` },
+    ].filter(Boolean);
+    let artistResults = null;
+    for (const params of searches) {
+        const results = await lrclibFetch('search', params);
+        artistResults ??= results;
+        const match = pickSyncedMatch(results, durationSec, true);
+        if (match) return match.syncedLyrics;
+    }
+    // Nothing the right length: any synced version by the exact artist.
+    return pickSyncedMatch(artistResults, durationSec, false)?.syncedLyrics || null;
+}
+
 async function fetchOnlineSyncedFallback(state) {
     isFetchingFallback = true;
     const cached = getLyricsFromCache(state);
@@ -1271,54 +1326,30 @@ async function fetchOnlineSyncedFallback(state) {
         return;
     }
 
-    const title = normalizeTrackTitle(state.title);
-    const artist = normalizeArtistName(state.artist);
-    const album = state.album || state.albumName || '';
-    const durationSec = getTrackDurationSec(state);
-
+    // The track may change while LRCLIB answers; a stale answer must not
+    // land on (or mark as lyric-less) whatever is playing by then.
+    const token = ++lyricsFetchToken;
+    const trackId = currentTrackId;
+    const isCurrent = () => token === lyricsFetchToken && trackId === currentTrackId;
     try {
-        if (durationSec) {
-            const getUrl = new URL('https://lrclib.net/api/get');
-            getUrl.searchParams.set('track_name', title);
-            getUrl.searchParams.set('artist_name', artist);
-            getUrl.searchParams.set('album_name', album);
-            getUrl.searchParams.set('duration', String(durationSec));
-
-            const getRes = await fetch(getUrl, { headers: LRCLIB_HEADERS });
-            if (getRes.ok) {
-                const track = await getRes.json();
-                if (track.syncedLyrics) {
-                    applyLyrics(parseLRCString(track.syncedLyrics), state, 'lrclib');
-                    return;
-                }
-            }
-        }
-
-        const searchUrl = new URL('https://lrclib.net/api/search');
-        searchUrl.searchParams.set('track_name', title);
-        if (artist) searchUrl.searchParams.set('artist_name', artist);
-
-        const res = await fetch(searchUrl, { headers: LRCLIB_HEADERS });
-        if (!res.ok) { fallbackFailed = true; return; }
-
-        const results = await res.json();
-        if (!results || results.length === 0) { fallbackFailed = true; return; }
-
-        const withSync = results.filter((track) => track.syncedLyrics);
-        let bestMatch = withSync.find((track) => durationSec && track.duration && Math.abs(track.duration - durationSec) <= 3);
-        if (!bestMatch) bestMatch = withSync[0];
-        if (!bestMatch) bestMatch = results[0];
-
-        if (bestMatch?.syncedLyrics) {
-            applyLyrics(parseLRCString(bestMatch.syncedLyrics), state, 'lrclib');
-        } else {
+        const synced = await findSyncedLyrics(state);
+        if (synced) {
+            const lines = parseLRCString(synced);
+            if (isCurrent()) applyLyrics(lines, state, 'lrclib');
+            else saveLyricsToCache(state, lines, 'lrclib');
+        } else if (isCurrent()) {
             fallbackFailed = true;
         }
     } catch (err) {
         console.error('Fallback engine error:', err);
-        fallbackFailed = true;
+        if (isCurrent()) {
+            fallbackFailed = true;
+            setTimeout(() => {
+                if (trackId === currentTrackId && !cachedLyrics?.length) fallbackFailed = false;
+            }, LYRICS_RETRY_MS);
+        }
     } finally {
-        isFetchingFallback = false;
+        if (isCurrent()) isFetchingFallback = false;
     }
 }
 
